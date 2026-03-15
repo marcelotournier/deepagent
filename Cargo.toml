@@ -1,6 +1,6 @@
 [package]
 name = "deepagent"
-version = "0.6.0"
+version = "0.7.1"
 edition = "2021"
 description = "Rust coding agent powered by Gemini Flash 3.1, installable via pip"
 license = "MIT"

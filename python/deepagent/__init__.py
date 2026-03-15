@@ -142,5 +142,5 @@ def run_json(
     return json.loads(result.stdout)
 
 
-__version__ = "0.6.0"
+__version__ = "0.7.1"
 __all__ = ["run", "run_json", "__version__"]
