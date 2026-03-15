@@ -265,7 +265,20 @@ impl LlmClient for GeminiClient {
 
             if !status.is_success() {
                 let error_body = response.text().await.unwrap_or_default();
-                anyhow::bail!("Gemini API error {}: {}", status.as_u16(), error_body);
+                let hint = match status.as_u16() {
+                    400 => "\nHint: Check that your prompt and tool schemas are valid.",
+                    401 | 403 => "\nHint: Your GEMINI_API_KEY may be invalid or expired. Get a new key at https://ai.google.dev",
+                    404 => &format!("\nHint: Model '{}' may not exist or is not available on your plan.", model_name),
+                    500 | 503 => "\nHint: Gemini API server error. Try again in a few seconds.",
+                    _ => "",
+                };
+                anyhow::bail!(
+                    "Gemini API error {} (model: {}): {}{}",
+                    status.as_u16(),
+                    model_name,
+                    error_body,
+                    hint
+                );
             }
 
             slot.rate_limiter.report_success().await;
@@ -314,10 +327,9 @@ impl LlmClient for GeminiClient {
 fn parse_gemini_response(body: &Value) -> Result<Vec<ResponsePart>> {
     let mut parts = Vec::new();
 
-    let candidates = body
-        .get("candidates")
-        .and_then(|c| c.as_array())
-        .context("no candidates in Gemini response")?;
+    let candidates = body.get("candidates").and_then(|c| c.as_array()).context(
+        "no candidates in Gemini response (may be blocked by safety filters or empty prompt)",
+    )?;
 
     for candidate in candidates {
         let content = candidate
