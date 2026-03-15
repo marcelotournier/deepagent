@@ -779,4 +779,38 @@ mod tests {
         let result = agent.run("use nonexistent tool").await.unwrap();
         assert_eq!(result, "ok");
     }
+
+    #[test]
+    fn test_extract_file_change_write() {
+        let change = extract_file_change(
+            "write",
+            &serde_json::json!({"path": "src/new.rs", "content": "fn main() {}"}),
+        );
+        assert!(change.is_some());
+        let c = change.unwrap();
+        assert_eq!(c.path, "src/new.rs");
+        assert_eq!(c.action, "created");
+    }
+
+    #[test]
+    fn test_extract_file_change_edit() {
+        let change = extract_file_change(
+            "edit",
+            &serde_json::json!({"path": "src/lib.rs", "old_str": "a", "new_str": "b"}),
+        );
+        assert!(change.is_some());
+        assert_eq!(change.unwrap().action, "edited");
+    }
+
+    #[test]
+    fn test_extract_file_change_read_noop() {
+        let change = extract_file_change("read", &serde_json::json!({"path": "src/lib.rs"}));
+        assert!(change.is_none());
+    }
+
+    #[test]
+    fn test_extract_file_change_bash_noop() {
+        let change = extract_file_change("bash", &serde_json::json!({"command": "echo hi"}));
+        assert!(change.is_none());
+    }
 }
