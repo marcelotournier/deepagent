@@ -370,6 +370,17 @@ fn parse_usage_metadata(body: &Value) -> UsageMetadata {
     }
 }
 
+/// Public test helper: parse a Gemini response body into ResponseParts.
+/// Used by integration tests to verify response parsing without HTTP calls.
+pub fn parse_response_for_testing(body: &serde_json::Value) -> Result<Vec<ResponsePart>> {
+    parse_gemini_response(body)
+}
+
+/// Public test helper: parse usage metadata from a Gemini response body.
+pub fn parse_usage_for_testing(body: &serde_json::Value) -> UsageMetadata {
+    parse_usage_metadata(body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
