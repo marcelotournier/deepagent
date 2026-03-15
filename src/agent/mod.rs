@@ -1,3 +1,3 @@
 pub mod executor;
 
-pub use executor::{Agent, AgentEvent};
+pub use executor::{Agent, AgentEvent, FileChange};

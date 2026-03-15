@@ -27,6 +27,15 @@ pub enum AgentEvent {
         candidates_tokens: usize,
         total_tokens: usize,
     },
+    /// Files modified during the session.
+    FilesChanged { files: Vec<FileChange> },
+}
+
+/// A file change recorded during the agent session.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct FileChange {
+    pub path: String,
+    pub action: String, // "created", "edited", "patched"
 }
 
 /// The ReAct agent that orchestrates think → act → observe loops.
@@ -159,6 +168,7 @@ todowrite(action="add", text="Step 1: find files") → glob(...) → todowrite(a
         let tool_declarations = self.tools.gemini_function_declarations();
         let mut final_output = String::new();
         let mut recent_calls: Vec<String> = Vec::new();
+        let mut changed_files: Vec<FileChange> = Vec::new();
 
         for turn in 0..self.max_turns {
             on_event(AgentEvent::TurnStart {
@@ -223,6 +233,13 @@ todowrite(action="add", text="Step 1: find files") → glob(...) → todowrite(a
                             name: fc.name.clone(),
                             output: result_text[..result_text.len().min(500)].to_string(),
                         });
+
+                        // Track file changes from write/edit/patch tools
+                        if result.is_ok() {
+                            if let Some(change) = extract_file_change(&fc.name, &fc.args) {
+                                changed_files.push(change);
+                            }
+                        }
 
                         function_responses.push(MessagePart::FunctionResponse {
                             function_response: FunctionResponse {
@@ -310,6 +327,14 @@ todowrite(action="add", text="Step 1: find files") → glob(...) → todowrite(a
             final_output = "(agent completed without text output)".to_string();
         }
 
+        // Emit file change summary
+        if !changed_files.is_empty() {
+            changed_files.dedup_by(|a, b| a.path == b.path);
+            on_event(AgentEvent::FilesChanged {
+                files: changed_files,
+            });
+        }
+
         Ok(final_output)
     }
 
@@ -392,6 +417,21 @@ fn compress_history(messages: &mut [Message]) {
             }
         }
     }
+}
+
+/// Extract a file change record from a tool call if it modifies files.
+fn extract_file_change(tool_name: &str, args: &serde_json::Value) -> Option<FileChange> {
+    let path = args.get("path").and_then(|v| v.as_str())?.to_string();
+    let action = match tool_name {
+        "write" => "created",
+        "edit" => "edited",
+        "patch" => "patched",
+        _ => return None,
+    };
+    Some(FileChange {
+        path,
+        action: action.to_string(),
+    })
 }
 
 /// Tools that only read state and don't modify files.

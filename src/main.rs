@@ -208,6 +208,14 @@ async fn main() -> Result<()> {
             collected.iter().filter_map(|e| e.candidates_tokens).sum();
         let total_api_tokens: usize = collected.iter().filter_map(|e| e.total_api_tokens).sum();
 
+        // Collect file changes
+        let files_changed: Vec<_> = collected
+            .iter()
+            .filter(|e| e.event_type == "files_changed")
+            .filter_map(|e| e.files_changed.clone())
+            .flatten()
+            .collect();
+
         let output = serde_json::json!({
             "result": result,
             "metrics": {
@@ -218,7 +226,9 @@ async fn main() -> Result<()> {
                 "candidates_tokens": total_candidates_tokens,
                 "total_tokens": total_api_tokens,
                 "result_chars": result.len(),
+                "files_changed": files_changed.len(),
             },
+            "files_changed": files_changed,
             "model": cli.model,
             "session_id": session_id,
             "events": collected.iter().map(|e| serde_json::to_value(e).unwrap()).collect::<Vec<_>>(),
@@ -260,6 +270,8 @@ struct JsonEvent {
     candidates_tokens: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     total_api_tokens: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    files_changed: Option<Vec<deepagent::agent::FileChange>>,
 }
 
 impl JsonEvent {
@@ -275,6 +287,7 @@ impl JsonEvent {
             prompt_tokens: None,
             candidates_tokens: None,
             total_api_tokens: None,
+            files_changed: None,
         }
     }
 
@@ -312,6 +325,11 @@ impl JsonEvent {
                 e.prompt_tokens = Some(*prompt_tokens);
                 e.candidates_tokens = Some(*candidates_tokens);
                 e.total_api_tokens = Some(*total_tokens);
+                e
+            }
+            AgentEvent::FilesChanged { files } => {
+                let mut e = Self::empty("files_changed");
+                e.files_changed = Some(files.clone());
                 e
             }
         }
@@ -358,6 +376,12 @@ fn print_progress(event: &AgentEvent) {
                 "\x1b[90m  tokens: {} prompt + {} output = {} total\x1b[0m",
                 prompt_tokens, candidates_tokens, total_tokens
             );
+        }
+        AgentEvent::FilesChanged { files } => {
+            let _ = writeln!(err, "\x1b[35m--- Files changed ---\x1b[0m");
+            for f in files {
+                let _ = writeln!(err, "\x1b[35m  {} ({})\x1b[0m", f.path, f.action);
+            }
         }
     }
 }
