@@ -62,3 +62,79 @@ fn test_json_flag_accepted() {
         .assert()
         .failure(); // fails because API key is invalid, but flag is accepted
 }
+
+#[test]
+fn test_sessions_list_empty() {
+    // --sessions should work even with no sessions
+    Command::cargo_bin("deepagent")
+        .unwrap()
+        .env("HOME", "/tmp/deepagent_test_nonexistent")
+        .arg("--sessions")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No saved sessions"));
+}
+
+#[test]
+fn test_resume_nonexistent() {
+    Command::cargo_bin("deepagent")
+        .unwrap()
+        .env("GEMINI_API_KEY", "test-key")
+        .env("HOME", "/tmp/deepagent_test_nonexistent")
+        .args(["--resume", "nonexistent123"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not found"));
+}
+
+#[test]
+fn test_resume_last_no_sessions() {
+    Command::cargo_bin("deepagent")
+        .unwrap()
+        .env("GEMINI_API_KEY", "test-key")
+        .env("HOME", "/tmp/deepagent_test_nonexistent")
+        .args(["--resume", "last"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no session"));
+}
+
+#[test]
+fn test_help_shows_all_flags() {
+    let output = Command::cargo_bin("deepagent")
+        .unwrap()
+        .arg("--help")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Verify all major flags are documented
+    assert!(stdout.contains("--prompt"));
+    assert!(stdout.contains("--model"));
+    assert!(stdout.contains("--max-turns"));
+    assert!(stdout.contains("--timeout"));
+    assert!(stdout.contains("--verbose"));
+    assert!(stdout.contains("--json"));
+    assert!(stdout.contains("--resume"));
+    assert!(stdout.contains("--sessions"));
+}
+
+#[test]
+fn test_custom_model_flag() {
+    Command::cargo_bin("deepagent")
+        .unwrap()
+        .env("GEMINI_API_KEY", "test-key")
+        .args(["--model", "gemini-2.5-pro", "-p", "test"])
+        .assert()
+        .failure(); // fails at API call, but model flag accepted
+}
+
+#[test]
+fn test_max_turns_flag() {
+    Command::cargo_bin("deepagent")
+        .unwrap()
+        .env("GEMINI_API_KEY", "test-key")
+        .args(["--max-turns", "5", "-p", "test"])
+        .assert()
+        .failure(); // fails at API call, but flag accepted
+}
