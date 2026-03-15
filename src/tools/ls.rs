@@ -116,6 +116,23 @@ fn format_size(bytes: u64) -> String {
 }
 
 #[cfg(test)]
+mod format_size_tests {
+    use super::*;
+
+    #[test]
+    fn test_format_size() {
+        assert_eq!(format_size(0), "0 B");
+        assert_eq!(format_size(500), "500 B");
+        assert_eq!(format_size(1023), "1023 B");
+        assert_eq!(format_size(1024), "1.0 KB");
+        assert_eq!(format_size(1536), "1.5 KB");
+        assert_eq!(format_size(1024 * 1024), "1.0 MB");
+        assert_eq!(format_size(1024 * 1024 * 5), "5.0 MB");
+        assert_eq!(format_size(1024 * 1024 * 10 + 512 * 1024), "10.5 MB");
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::tools::Tool;
