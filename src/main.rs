@@ -201,8 +201,12 @@ async fn main() -> Result<()> {
             .iter()
             .filter(|e| e.event_type == "turn_start")
             .count();
-        // Rough token estimate: chars / 4
-        let estimated_output_tokens = result.len() / 4;
+
+        // Sum actual token usage from API responses
+        let total_prompt_tokens: usize = collected.iter().filter_map(|e| e.prompt_tokens).sum();
+        let total_candidates_tokens: usize =
+            collected.iter().filter_map(|e| e.candidates_tokens).sum();
+        let total_api_tokens: usize = collected.iter().filter_map(|e| e.total_api_tokens).sum();
 
         let output = serde_json::json!({
             "result": result,
@@ -210,7 +214,9 @@ async fn main() -> Result<()> {
                 "elapsed_ms": elapsed.as_millis(),
                 "turns": turns,
                 "tool_calls": tool_calls,
-                "estimated_output_tokens": estimated_output_tokens,
+                "prompt_tokens": total_prompt_tokens,
+                "candidates_tokens": total_candidates_tokens,
+                "total_tokens": total_api_tokens,
                 "result_chars": result.len(),
             },
             "model": cli.model,
@@ -248,47 +254,66 @@ struct JsonEvent {
     output: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prompt_tokens: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    candidates_tokens: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    total_api_tokens: Option<usize>,
 }
 
 impl JsonEvent {
+    fn empty(event_type: &str) -> Self {
+        Self {
+            event_type: event_type.into(),
+            turn: None,
+            max_turns: None,
+            name: None,
+            args: None,
+            output: None,
+            text: None,
+            prompt_tokens: None,
+            candidates_tokens: None,
+            total_api_tokens: None,
+        }
+    }
+
     fn from_agent_event(event: &AgentEvent) -> Self {
         match event {
-            AgentEvent::TurnStart { turn, max_turns } => Self {
-                event_type: "turn_start".into(),
-                turn: Some(*turn),
-                max_turns: Some(*max_turns),
-                name: None,
-                args: None,
-                output: None,
-                text: None,
-            },
-            AgentEvent::ToolCall { name, args } => Self {
-                event_type: "tool_call".into(),
-                turn: None,
-                max_turns: None,
-                name: Some(name.clone()),
-                args: Some(args.clone()),
-                output: None,
-                text: None,
-            },
-            AgentEvent::ToolResult { name, output } => Self {
-                event_type: "tool_result".into(),
-                turn: None,
-                max_turns: None,
-                name: Some(name.clone()),
-                args: None,
-                output: Some(output.clone()),
-                text: None,
-            },
-            AgentEvent::ModelText { text } => Self {
-                event_type: "model_text".into(),
-                turn: None,
-                max_turns: None,
-                name: None,
-                args: None,
-                output: None,
-                text: Some(text.clone()),
-            },
+            AgentEvent::TurnStart { turn, max_turns } => {
+                let mut e = Self::empty("turn_start");
+                e.turn = Some(*turn);
+                e.max_turns = Some(*max_turns);
+                e
+            }
+            AgentEvent::ToolCall { name, args } => {
+                let mut e = Self::empty("tool_call");
+                e.name = Some(name.clone());
+                e.args = Some(args.clone());
+                e
+            }
+            AgentEvent::ToolResult { name, output } => {
+                let mut e = Self::empty("tool_result");
+                e.name = Some(name.clone());
+                e.output = Some(output.clone());
+                e
+            }
+            AgentEvent::ModelText { text } => {
+                let mut e = Self::empty("model_text");
+                e.text = Some(text.clone());
+                e
+            }
+            AgentEvent::TokenUsage {
+                prompt_tokens,
+                candidates_tokens,
+                total_tokens,
+            } => {
+                let mut e = Self::empty("token_usage");
+                e.prompt_tokens = Some(*prompt_tokens);
+                e.candidates_tokens = Some(*candidates_tokens);
+                e.total_api_tokens = Some(*total_tokens);
+                e
+            }
         }
     }
 }
@@ -322,6 +347,17 @@ fn print_progress(event: &AgentEvent) {
                 text.clone()
             };
             let _ = writeln!(err, "\x1b[33m● {}\x1b[0m", preview);
+        }
+        AgentEvent::TokenUsage {
+            prompt_tokens,
+            candidates_tokens,
+            total_tokens,
+        } => {
+            let _ = writeln!(
+                err,
+                "\x1b[90m  tokens: {} prompt + {} output = {} total\x1b[0m",
+                prompt_tokens, candidates_tokens, total_tokens
+            );
         }
     }
 }

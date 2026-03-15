@@ -1,9 +1,10 @@
-use super::{FunctionCall, LlmClient, Message, MessagePart, ResponsePart};
+use super::{FunctionCall, LlmClient, Message, MessagePart, ResponsePart, UsageMetadata};
 use crate::api::rate_limiter::{RateLimiter, RateLimiterConfig};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde_json::Value;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 use std::time::Duration;
 
 /// A model in the fallback chain with its own rate limiter.
@@ -21,6 +22,7 @@ pub struct GeminiClient {
     client: reqwest::Client,
     models: Vec<ModelSlot>,
     active_model: AtomicUsize,
+    last_usage: Mutex<UsageMetadata>,
 }
 
 /// Configuration for a model in the fallback chain.
@@ -72,6 +74,7 @@ impl GeminiClient {
             client,
             models: model_slots,
             active_model: AtomicUsize::new(0),
+            last_usage: Mutex::new(UsageMetadata::default()),
         }
     }
 
@@ -267,10 +270,29 @@ impl LlmClient for GeminiClient {
 
             slot.rate_limiter.report_success().await;
 
+            // Auto-switch to lite at 90% daily budget
+            let count = slot.rate_limiter.daily_count();
+            let limit = slot.rate_limiter.daily_limit();
+            if count >= (limit as f64 * 0.9) as u64 && self.models.len() > 1 {
+                let current = self.active_model.load(Ordering::Relaxed);
+                if current == 0 {
+                    tracing::warn!(
+                        "Daily budget at 90% ({}/{}), auto-switching to lite model",
+                        count,
+                        limit
+                    );
+                    self.prefer_lite();
+                }
+            }
+
             let resp_body: Value = response
                 .json()
                 .await
                 .context("failed to parse Gemini response")?;
+
+            // Parse and store token usage
+            let usage = parse_usage_metadata(&resp_body);
+            *self.last_usage.lock().unwrap() = usage;
 
             return parse_gemini_response(&resp_body);
         }
@@ -282,6 +304,10 @@ impl LlmClient for GeminiClient {
 
     fn hint_prefer_primary(&self) {
         self.prefer_primary();
+    }
+
+    fn last_usage(&self) -> UsageMetadata {
+        self.last_usage.lock().unwrap().clone()
     }
 }
 
@@ -320,6 +346,28 @@ fn parse_gemini_response(body: &Value) -> Result<Vec<ResponsePart>> {
     }
 
     Ok(parts)
+}
+
+/// Parse token usage metadata from Gemini API response.
+fn parse_usage_metadata(body: &Value) -> UsageMetadata {
+    if let Some(usage) = body.get("usageMetadata") {
+        UsageMetadata {
+            prompt_tokens: usage
+                .get("promptTokenCount")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as usize,
+            candidates_tokens: usage
+                .get("candidatesTokenCount")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as usize,
+            total_tokens: usage
+                .get("totalTokenCount")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as usize,
+        }
+    } else {
+        UsageMetadata::default()
+    }
 }
 
 #[cfg(test)]

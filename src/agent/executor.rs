@@ -21,6 +21,12 @@ pub enum AgentEvent {
     ToolResult { name: String, output: String },
     /// The model produced text output.
     ModelText { text: String },
+    /// Token usage for the current turn.
+    TokenUsage {
+        prompt_tokens: usize,
+        candidates_tokens: usize,
+        total_tokens: usize,
+    },
 }
 
 /// The ReAct agent that orchestrates think → act → observe loops.
@@ -143,6 +149,16 @@ impl Agent {
                 .client
                 .generate(&self.system_prompt, &messages, &tool_declarations)
                 .await?;
+
+            // Emit token usage from this turn
+            let usage = self.client.last_usage();
+            if usage.total_tokens > 0 {
+                on_event(AgentEvent::TokenUsage {
+                    prompt_tokens: usage.prompt_tokens,
+                    candidates_tokens: usage.candidates_tokens,
+                    total_tokens: usage.total_tokens,
+                });
+            }
 
             let mut has_function_call = false;
             let mut model_parts: Vec<MessagePart> = Vec::new();

@@ -49,6 +49,14 @@ pub enum MessagePart {
     },
 }
 
+/// Token usage metadata from the API response.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UsageMetadata {
+    pub prompt_tokens: usize,
+    pub candidates_tokens: usize,
+    pub total_tokens: usize,
+}
+
 /// Trait for LLM backends.
 #[async_trait]
 pub trait LlmClient: Send + Sync {
@@ -65,4 +73,9 @@ pub trait LlmClient: Send + Sync {
 
     /// Hint: prefer the primary model for the next call (reasoning needed).
     fn hint_prefer_primary(&self) {}
+
+    /// Get token usage from the last API call.
+    fn last_usage(&self) -> UsageMetadata {
+        UsageMetadata::default()
+    }
 }
