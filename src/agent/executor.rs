@@ -5,6 +5,11 @@ use anyhow::Result;
 /// Maximum characters per tool result before truncation.
 const MAX_TOOL_OUTPUT: usize = 16384;
 
+/// Approximate context window sizes for Gemini models (in tokens).
+/// We use chars/4 as a rough token estimate.
+const CONTEXT_WINDOW_TOKENS: usize = 1_000_000; // Gemini Flash has 1M context
+const COMPACTION_THRESHOLD: f64 = 0.80; // Trigger at 80% usage
+
 /// Progress events emitted during agent execution.
 #[derive(Debug, Clone)]
 pub enum AgentEvent {
@@ -169,8 +174,19 @@ Respond with either:
                 parts: function_responses,
             });
 
-            // Compress old messages to save tokens on long conversations
-            if messages.len() > 20 {
+            // Check if context is approaching capacity and compact if needed
+            let estimated_tokens = estimate_tokens(&messages);
+            let threshold = (CONTEXT_WINDOW_TOKENS as f64 * COMPACTION_THRESHOLD) as usize;
+            if estimated_tokens > threshold {
+                tracing::info!(
+                    "Context at ~{} tokens ({}% of {}), compacting",
+                    estimated_tokens,
+                    estimated_tokens * 100 / CONTEXT_WINDOW_TOKENS,
+                    CONTEXT_WINDOW_TOKENS
+                );
+                compact_context(&mut messages);
+            } else if messages.len() > 20 {
+                // Lighter compression for shorter conversations
                 compress_history(&mut messages);
             }
         }
@@ -235,6 +251,79 @@ fn compress_history(messages: &mut [Message]) {
             }
         }
     }
+}
+
+/// Estimate total token count across all messages.
+/// Uses chars/4 as a rough approximation (works well for English/code).
+fn estimate_tokens(messages: &[Message]) -> usize {
+    messages
+        .iter()
+        .map(|msg| {
+            msg.parts
+                .iter()
+                .map(|part| match part {
+                    MessagePart::Text { text } => text.len() / 4,
+                    MessagePart::FunctionCall { function_call } => {
+                        (function_call.name.len() + function_call.args.to_string().len()) / 4
+                    }
+                    MessagePart::FunctionResponse { function_response } => {
+                        (function_response.name.len()
+                            + function_response.response.to_string().len())
+                            / 4
+                    }
+                })
+                .sum::<usize>()
+        })
+        .sum()
+}
+
+/// Aggressive context compaction for when we're near the context window limit.
+/// Keeps the first message (user prompt) and last 6 messages.
+/// Middle messages are summarized: tool results replaced with brief summaries,
+/// text responses truncated to first 200 chars.
+fn compact_context(messages: &mut [Message]) {
+    if messages.len() <= 8 {
+        return;
+    }
+
+    let keep_tail = 6;
+    let compress_end = messages.len() - keep_tail;
+
+    // Aggressively compress all middle messages
+    for msg in messages[1..compress_end].iter_mut() {
+        for part in &mut msg.parts {
+            match part {
+                MessagePart::FunctionResponse { function_response } => {
+                    if let Some(result) = function_response.response.get("result") {
+                        if let Some(text) = result.as_str() {
+                            if text.len() > 100 {
+                                let summary = format!(
+                                    "[{}] {} chars of output (compacted)",
+                                    function_response.name,
+                                    text.len()
+                                );
+                                function_response.response = serde_json::json!({"result": summary});
+                            }
+                        }
+                    }
+                }
+                MessagePart::Text { text } => {
+                    if text.len() > 200 {
+                        *text = format!("{}... (compacted)", &text[..200]);
+                    }
+                }
+                MessagePart::FunctionCall { .. } => {
+                    // Keep function calls as-is — they're small
+                }
+            }
+        }
+    }
+
+    tracing::info!(
+        "Compacted {} messages, kept first + last {}",
+        compress_end - 1,
+        keep_tail
+    );
 }
 
 #[cfg(test)]
@@ -395,6 +484,63 @@ mod tests {
         if let MessagePart::FunctionResponse { function_response } = &last.parts[0] {
             let result = function_response.response["result"].as_str().unwrap();
             assert_eq!(result.len(), 1000);
+        }
+    }
+
+    #[test]
+    fn test_estimate_tokens() {
+        let messages = vec![
+            Message {
+                role: "user".to_string(),
+                parts: vec![MessagePart::Text {
+                    text: "x".repeat(400), // ~100 tokens
+                }],
+            },
+            Message {
+                role: "model".to_string(),
+                parts: vec![MessagePart::Text {
+                    text: "y".repeat(200), // ~50 tokens
+                }],
+            },
+        ];
+
+        let tokens = estimate_tokens(&messages);
+        assert_eq!(tokens, 150); // 400/4 + 200/4
+    }
+
+    #[test]
+    fn test_compact_context() {
+        let mut messages: Vec<Message> = (0..15)
+            .map(|i| Message {
+                role: if i % 2 == 0 {
+                    "user".to_string()
+                } else {
+                    "model".to_string()
+                },
+                parts: vec![MessagePart::FunctionResponse {
+                    function_response: FunctionResponse {
+                        name: "bash".to_string(),
+                        response: serde_json::json!({"result": "x".repeat(5000)}),
+                    },
+                }],
+            })
+            .collect();
+
+        compact_context(&mut messages);
+
+        // Middle messages (1..9) should be heavily compacted
+        let mid = &messages[3];
+        if let MessagePart::FunctionResponse { function_response } = &mid.parts[0] {
+            let result = function_response.response["result"].as_str().unwrap();
+            assert!(result.contains("compacted"));
+            assert!(result.len() < 200);
+        }
+
+        // Last 6 messages should be untouched
+        let tail = &messages[14];
+        if let MessagePart::FunctionResponse { function_response } = &tail.parts[0] {
+            let result = function_response.response["result"].as_str().unwrap();
+            assert_eq!(result.len(), 5000);
         }
     }
 }
