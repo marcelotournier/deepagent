@@ -3,6 +3,7 @@ pub mod edit;
 pub mod glob;
 pub mod grep;
 pub mod ls;
+pub mod patch;
 pub mod read;
 pub mod write;
 
@@ -53,6 +54,7 @@ impl ToolRegistry {
         registry.register(Box::new(grep::GrepTool::new(100)));
         registry.register(Box::new(glob::GlobTool::new(200)));
         registry.register(Box::new(ls::LsTool::new(2)));
+        registry.register(Box::new(patch::PatchTool));
         registry
     }
 
