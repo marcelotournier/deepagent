@@ -1,0 +1,14 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "deepagent"
+version = "0.1.0"
+description = "Rust coding agent powered by Gemini, installable via pip"
+requires-python = ">=3.10"
+license = "MIT"
+
+[tool.maturin]
+bindings = "bin"
+strip = true
