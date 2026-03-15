@@ -95,7 +95,7 @@ deepagent --system-prompt "You are a Python expert" -p "optimize this"
 
 ## Benchmarks
 
-### vs `claude -p` (10-task suite)
+### Efficiency benchmarks (10 tool tasks)
 
 ```bash
 ./scripts/benchmark.sh              # deepagent only (JSON metrics)
@@ -103,7 +103,19 @@ deepagent --system-prompt "You are a Python expert" -p "optimize this"
 ./scripts/benchmark.sh --task 3     # single task
 ```
 
-JSON output includes: elapsed_ms, turns, tool_calls, prompt_tokens, candidates_tokens, total_tokens.
+### Competency benchmarks (10 complex tasks)
+
+Real-world tasks: build apps, write reports, refactor code, debug.
+
+```bash
+./scripts/competency_bench.sh              # all 10 tasks
+./scripts/competency_bench.sh --task C1    # single task
+./scripts/competency_bench.sh --compare    # vs claude -p
+```
+
+Tasks: CLI calculator app, architecture docs, system monitor script,
+error handling refactor, fuzzy search module, security audit, CI workflow,
+bug investigation, REST API server, performance report.
 
 ### Tool execution (Criterion)
 

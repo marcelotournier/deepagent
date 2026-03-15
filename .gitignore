@@ -11,4 +11,5 @@ dist/
 *~
 .DS_Store
 benchmark_results/
+competency_results/
 .deepagent/

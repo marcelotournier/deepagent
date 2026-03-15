@@ -311,6 +311,66 @@ Both run from same directory with same file context.
 
 -----
 
+## Competency Benchmarks (Complex Tasks)
+
+Head-to-head comparison of `deepagent -p` vs `claude -p` on real-world
+complex tasks. Each task produces artifacts (files, reports, code) that
+can be manually scored for correctness, completeness, and quality.
+
+Both agents run in an isolated temp directory with the same starting files.
+Outputs saved as JSON with metrics + artifacts for side-by-side review.
+
+### Complex Task Suite
+
+|#  |Task Prompt                                                                                           |Tests                          |
+|---|------------------------------------------------------------------------------------------------------|-------------------------------|
+|C1 |"Build a Python CLI calculator app with +, -, *, /, history, and undo. Include tests and a README."   |Full app creation, testing     |
+|C2 |"Read all Rust source files in src/ and write a ARCHITECTURE.md explaining the codebase design."      |Code analysis, documentation   |
+|C3 |"Create a Bash script that monitors CPU and memory usage every 5s, logs to CSV, and alerts if CPU>80%"|Systems scripting, monitoring  |
+|C4 |"Find all error handling patterns in src/ and refactor them to use a consistent error type."          |Multi-file refactoring         |
+|C5 |"Write a Rust module src/tools/search.rs that implements fuzzy file search using Levenshtein distance"|Algorithm implementation       |
+|C6 |"Analyze the Cargo.toml dependencies and write a security audit report: outdated crates, known CVEs." |Research, analysis, reporting  |
+|C7 |"Create a complete GitHub Actions workflow that runs benchmarks on every PR and posts results as a comment"|CI/CD knowledge, YAML       |
+|C8 |"Debug: the grep tool returns wrong line numbers when context_lines > 0. Find and fix the bug."       |Debugging, reading, fixing     |
+|C9 |"Build a JSON REST API mock server in Python (Flask/FastAPI) with 3 endpoints, tests, and Dockerfile."|Full-stack app creation        |
+|C10|"Read the benchmark results in benchmark_results/ and write a performance report comparing the agents."|Data analysis, report writing |
+
+### Scoring Criteria (per task, 0-5 each)
+
+- **Correctness**: Does the output work? Can it compile/run without errors?
+- **Completeness**: Did the agent address all parts of the prompt?
+- **Quality**: Is the code clean, idiomatic, well-structured?
+- **Efficiency**: How many turns/tokens were used? Fewer is better.
+
+### Running Competency Benchmarks
+
+```bash
+# Run all complex tasks
+./scripts/competency_bench.sh
+
+# Run single task
+./scripts/competency_bench.sh --task C3
+
+# Compare mode
+./scripts/competency_bench.sh --compare
+
+# Review results
+ls competency_results/
+cat competency_results/C1_deepagent.json | jq '.metrics'
+```
+
+### TODO Cycle
+
+After each benchmark run, evaluate results and create next improvement:
+1. Run benchmark → save results
+2. Score outputs (0-5 per criterion)
+3. Identify weakest task
+4. Add feature or improve prompt to address weakness
+5. Re-run that task → verify improvement
+6. Repeat
+
+-----
+
 ## GitHub Workflow
 
 ### Initial Setup
