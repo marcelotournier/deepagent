@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use deepagent::agent::{Agent, AgentEvent};
 use deepagent::api::gemini::{GeminiClient, ModelConfig};
 use deepagent::cli::{daily_limit_for_model, rpm_for_model, Cli};
+use deepagent::session::{self, Session};
 use deepagent::tools::ToolRegistry;
 
 #[tokio::main]
@@ -20,6 +21,20 @@ async fn main() -> Result<()> {
         )
         .with_writer(std::io::stderr)
         .init();
+
+    // Handle --sessions flag: list and exit
+    if cli.sessions {
+        let session_dir = session::default_session_dir();
+        let sessions = Session::list(&session_dir).unwrap_or_default();
+        if sessions.is_empty() {
+            println!("No saved sessions.");
+        } else {
+            for s in &sessions {
+                println!("{}", s);
+            }
+        }
+        return Ok(());
+    }
 
     // Read stdin if available (non-blocking check)
     let stdin_content = if cli.stdin || !std::io::stdin().is_terminal() {
@@ -36,11 +51,31 @@ async fn main() -> Result<()> {
         None
     };
 
-    let prompt = cli.get_prompt(stdin_content).context(
-        "No prompt provided. Use -p \"prompt\" or pipe input via stdin.\n\
-         Example: deepagent -p \"list all .rs files\"\n\
-         Example: echo \"explain this code\" | deepagent",
-    )?;
+    // Handle --resume: load session and continue
+    let prompt = if let Some(ref resume_id) = cli.resume {
+        let session_dir = session::default_session_dir();
+        let session = if resume_id == "last" {
+            Session::load_latest(&session_dir).context("no session to resume")?
+        } else {
+            Session::load(&session_dir, resume_id)
+                .with_context(|| format!("session '{}' not found", resume_id))?
+        };
+        eprintln!(
+            "Resuming session {} ({} turns completed)",
+            session.id, session.turns_completed
+        );
+        // Use original prompt + "continue from where you left off"
+        format!(
+            "{}\n\n(Continuing from turn {}. Pick up where you left off.)",
+            session.prompt, session.turns_completed
+        )
+    } else {
+        cli.get_prompt(stdin_content).context(
+            "No prompt provided. Use -p \"prompt\" or pipe input via stdin.\n\
+             Example: deepagent -p \"list all .rs files\"\n\
+             Example: echo \"explain this code\" | deepagent",
+        )?
+    };
 
     // Get API key
     let api_key = std::env::var("GEMINI_API_KEY").context(
@@ -80,6 +115,14 @@ async fn main() -> Result<()> {
 
     tracing::info!("Running agent with model: {}", cli.model);
 
+    // Create session for persistence
+    let session_id = session::generate_session_id();
+    let session = Arc::new(Mutex::new(Session::new(
+        session_id.clone(),
+        prompt.clone(),
+        cli.model.clone(),
+    )));
+
     let verbose = cli.verbose;
     let json_mode = cli.json;
     let start_time = std::time::Instant::now();
@@ -87,6 +130,7 @@ async fn main() -> Result<()> {
     // Collect events for JSON output
     let events: Arc<Mutex<Vec<JsonEvent>>> = Arc::new(Mutex::new(Vec::new()));
     let events_clone = events.clone();
+    let session_clone = session.clone();
 
     let result = agent
         .run_with_progress(&prompt, move |event| {
@@ -99,10 +143,26 @@ async fn main() -> Result<()> {
                     .unwrap()
                     .push(JsonEvent::from_agent_event(&event));
             }
+            // Track turns in session
+            if let AgentEvent::TurnStart { turn, .. } = &event {
+                session_clone.lock().unwrap().turns_completed = *turn;
+            }
         })
-        .await?;
+        .await;
 
     let elapsed = start_time.elapsed();
+
+    // Save session
+    {
+        let mut s = session.lock().unwrap();
+        s.completed = result.is_ok();
+        let session_dir = session::default_session_dir();
+        if let Err(e) = s.save(&session_dir) {
+            tracing::warn!("Failed to save session: {}", e);
+        }
+    }
+
+    let result = result?;
 
     if json_mode {
         let collected = events.lock().unwrap();
@@ -110,6 +170,7 @@ async fn main() -> Result<()> {
             "result": result,
             "elapsed_ms": elapsed.as_millis(),
             "model": cli.model,
+            "session_id": session_id,
             "events": collected.iter().map(|e| serde_json::to_value(e).unwrap()).collect::<Vec<_>>(),
         });
         println!("{}", serde_json::to_string_pretty(&output)?);
@@ -117,7 +178,8 @@ async fn main() -> Result<()> {
         println!("{}", result);
         if verbose {
             eprintln!(
-                "\x1b[90m[completed in {:.2}s]\x1b[0m",
+                "\x1b[90m[session {} | completed in {:.2}s]\x1b[0m",
+                session_id,
                 elapsed.as_secs_f64()
             );
         }

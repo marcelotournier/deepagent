@@ -39,6 +39,14 @@ pub struct Cli {
     /// Output result as JSON (structured output for piping)
     #[arg(long, default_value_t = false)]
     pub json: bool,
+
+    /// Resume a previous session by ID (or 'last' for most recent)
+    #[arg(long)]
+    pub resume: Option<String>,
+
+    /// List saved sessions
+    #[arg(long, default_value_t = false)]
+    pub sessions: bool,
 }
 
 impl Cli {
@@ -91,6 +99,8 @@ mod tests {
             log_level: "warn".into(),
             verbose: false,
             json: false,
+            resume: None,
+            sessions: false,
         };
         assert_eq!(cli.get_prompt(None), Some("hello".into()));
     }
@@ -106,6 +116,8 @@ mod tests {
             log_level: "warn".into(),
             verbose: false,
             json: false,
+            resume: None,
+            sessions: false,
         };
         assert_eq!(
             cli.get_prompt(Some("from stdin".into())),
@@ -124,6 +136,8 @@ mod tests {
             log_level: "warn".into(),
             verbose: false,
             json: false,
+            resume: None,
+            sessions: false,
         };
         let result = cli.get_prompt(Some("code here".into())).unwrap();
         assert!(result.contains("explain this"));
@@ -141,6 +155,8 @@ mod tests {
             log_level: "warn".into(),
             verbose: false,
             json: false,
+            resume: None,
+            sessions: false,
         };
         assert!(cli.get_prompt(None).is_none());
     }
