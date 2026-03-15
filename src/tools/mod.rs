@@ -5,6 +5,7 @@ pub mod grep;
 pub mod ls;
 pub mod patch;
 pub mod read;
+pub mod think;
 pub mod todo;
 pub mod webfetch;
 pub mod write;
@@ -58,6 +59,8 @@ impl ToolRegistry {
         registry.register(Box::new(ls::LsTool::new(2)));
         registry.register(Box::new(patch::PatchTool));
         registry.register(Box::new(webfetch::WebFetchTool::new()));
+
+        registry.register(Box::new(think::ThinkTool));
 
         let todo_list = todo::new_todo_list();
         registry.register(Box::new(todo::TodoWriteTool::new(todo_list.clone())));
