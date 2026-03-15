@@ -52,10 +52,12 @@ impl Agent {
         }
     }
 
-    /// Build the default system prompt with tool schemas, environment info,
-    /// and optional project instructions from DEEPAGENT.md.
+    /// Build the default system prompt with environment info, rules, and examples.
+    /// Tool schemas are NOT included here — they're sent via the Gemini `tools` field
+    /// in the API request, saving hundreds of tokens per turn.
     pub fn build_system_prompt(tools: &ToolRegistry, working_dir: &str, os_info: &str) -> String {
-        let tool_schemas = serde_json::to_string_pretty(&tools.schemas()).unwrap_or_default();
+        // List tool names (schemas sent separately via function declarations)
+        let tool_names = tools.tool_names().join(", ");
 
         // Read project-specific instructions if available
         let project_instructions = Self::read_project_config(working_dir);
@@ -66,9 +68,7 @@ impl Agent {
 ## Environment
 - Working directory: {working_dir}
 - OS: {os_info}
-
-## Available Tools
-{tool_schemas}
+- Available tools: {tool_names}
 
 ## Rules
 1. **Explore before acting**: Use grep/glob to find relevant files before reading them. Read files before editing.
@@ -77,10 +77,31 @@ impl Agent {
 4. **Use the think tool** for complex tasks: Plan your approach before executing multiple steps.
 5. **Use todowrite/todoread** to track progress on multi-step tasks.
 6. **Be concise**: Provide clear, brief explanations. Focus on what you did and why.
-7. **Handle errors**: If a tool call fails, read the error, adjust your approach, and retry.
-8. **Batch operations**: If you need to read multiple files, do them in sequence efficiently.
-9. **Security**: Never execute destructive commands without being explicitly asked. Never expose secrets.
-10. **Complete the task**: Keep working until the task is fully done, then provide a summary.
+7. **Handle errors**: If a tool call fails, read the error, adjust your approach, and retry with a different strategy.
+8. **Security**: Never execute destructive commands without being explicitly asked. Never expose secrets.
+9. **Complete the task**: Keep working until the task is fully done, then provide a clear summary.
+
+## Tool Usage Patterns (examples)
+
+**Finding files**: glob → read
+```
+glob(pattern="**/*.rs") → read(path="src/main.rs")
+```
+
+**Fixing a bug**: read → think → edit → bash (verify)
+```
+read(path="src/lib.rs") → think(thought="The bug is on line 42...") → edit(path="src/lib.rs", old_str="...", new_str="...") → bash(command="cargo test")
+```
+
+**Searching codebase**: grep → read relevant matches
+```
+grep(pattern="TODO", path=".") → read(path="src/tools/mod.rs", start_line=10, end_line=20)
+```
+
+**Multi-step task**: todowrite → work → todowrite (update) → verify
+```
+todowrite(action="add", text="Step 1: find files") → glob(...) → todowrite(action="update", id=1, status="done")
+```
 
 ## Response Format
 - To use a tool: respond with a function_call
