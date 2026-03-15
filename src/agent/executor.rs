@@ -204,7 +204,22 @@ impl Agent {
 
             if !has_function_call {
                 // Model is done — return text
+                self.client.hint_prefer_primary();
                 break;
+            }
+
+            // Smart model routing: if only simple tool calls (read-only tools),
+            // hint to use the lite model for the next turn to save tokens.
+            let has_text = response.iter().any(|p| matches!(p, ResponsePart::Text(_)));
+            let only_readonly_tools = response.iter().all(|p| match p {
+                ResponsePart::FunctionCall(fc) => is_readonly_tool(&fc.name),
+                ResponsePart::Text(_) => true,
+            });
+
+            if !has_text && only_readonly_tools {
+                self.client.hint_prefer_lite();
+            } else {
+                self.client.hint_prefer_primary();
             }
 
             // Coalesce: all function responses go in a single message
@@ -291,6 +306,12 @@ fn compress_history(messages: &mut [Message]) {
             }
         }
     }
+}
+
+/// Tools that only read state and don't modify files.
+/// These can safely use a cheaper/faster model.
+fn is_readonly_tool(name: &str) -> bool {
+    matches!(name, "read" | "grep" | "glob" | "ls" | "think" | "todoread")
 }
 
 /// Estimate total token count across all messages.

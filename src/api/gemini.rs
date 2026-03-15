@@ -108,6 +108,28 @@ impl GeminiClient {
         &self.active_slot().name
     }
 
+    /// Temporarily prefer the lite model for simple tool dispatch.
+    /// Resets to primary on the next successful reasoning call.
+    pub fn prefer_lite(&self) {
+        if self.models.len() > 1 {
+            let last = self.models.len() - 1;
+            self.active_model.store(last, Ordering::Relaxed);
+            tracing::debug!(
+                "Smart routing: using lite model {} for tool dispatch",
+                self.models[last].name
+            );
+        }
+    }
+
+    /// Switch back to the primary model for reasoning.
+    pub fn prefer_primary(&self) {
+        self.active_model.store(0, Ordering::Relaxed);
+        tracing::debug!(
+            "Smart routing: using primary model {} for reasoning",
+            self.models[0].name
+        );
+    }
+
     fn build_request_body(
         &self,
         system_prompt: &str,
@@ -252,6 +274,14 @@ impl LlmClient for GeminiClient {
 
             return parse_gemini_response(&resp_body);
         }
+    }
+
+    fn hint_prefer_lite(&self) {
+        self.prefer_lite();
+    }
+
+    fn hint_prefer_primary(&self) {
+        self.prefer_primary();
     }
 }
 

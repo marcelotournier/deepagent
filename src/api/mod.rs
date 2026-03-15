@@ -59,4 +59,10 @@ pub trait LlmClient: Send + Sync {
         messages: &[Message],
         tools: &[serde_json::Value],
     ) -> Result<Vec<ResponsePart>>;
+
+    /// Hint: prefer a lighter model for the next call (simple tool dispatch).
+    fn hint_prefer_lite(&self) {}
+
+    /// Hint: prefer the primary model for the next call (reasoning needed).
+    fn hint_prefer_primary(&self) {}
 }
