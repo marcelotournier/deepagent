@@ -3,7 +3,7 @@ use clap::Parser;
 use std::io::{IsTerminal, Read};
 
 use deepagent::agent::Agent;
-use deepagent::api::gemini::GeminiClient;
+use deepagent::api::gemini::{GeminiClient, ModelConfig};
 use deepagent::cli::{daily_limit_for_model, rpm_for_model, Cli};
 use deepagent::tools::ToolRegistry;
 
@@ -57,10 +57,24 @@ async fn main() -> Result<()> {
     let system_prompt =
         Agent::build_system_prompt(&tools, &working_dir.display().to_string(), &os_info);
 
-    // Create Gemini client with free-tier rate limits
-    let daily_limit = daily_limit_for_model(&cli.model);
-    let rpm = rpm_for_model(&cli.model);
-    let client = GeminiClient::new(api_key, cli.model.clone(), daily_limit, rpm);
+    // Create Gemini client with fallback chain for free-tier resilience
+    // Primary: user-selected model → fallback: flash-lite (highest free-tier quota)
+    let mut model_chain = vec![ModelConfig {
+        name: cli.model.clone(),
+        daily_limit: daily_limit_for_model(&cli.model),
+        rpm: rpm_for_model(&cli.model),
+    }];
+
+    // Add flash-lite as fallback if primary isn't already lite
+    if !cli.model.contains("lite") {
+        model_chain.push(ModelConfig {
+            name: "gemini-2.5-flash-lite".to_string(),
+            daily_limit: daily_limit_for_model("gemini-2.5-flash-lite"),
+            rpm: rpm_for_model("gemini-2.5-flash-lite"),
+        });
+    }
+
+    let client = GeminiClient::with_fallback(api_key, model_chain);
 
     // Create and run agent
     let agent = Agent::new(Box::new(client), tools, cli.max_turns, system_prompt);

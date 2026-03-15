@@ -3,43 +3,109 @@ use crate::api::rate_limiter::{RateLimiter, RateLimiterConfig};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde_json::Value;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-pub struct GeminiClient {
-    api_key: String,
-    model: String,
-    client: reqwest::Client,
+/// A model in the fallback chain with its own rate limiter.
+struct ModelSlot {
+    name: String,
     rate_limiter: RateLimiter,
 }
 
+/// Gemini API client with automatic model fallback on rate limits.
+///
+/// When the primary model hits repeated 429s, it falls back to the next
+/// model in the chain. This maximizes free-tier usage across models.
+pub struct GeminiClient {
+    api_key: String,
+    client: reqwest::Client,
+    models: Vec<ModelSlot>,
+    active_model: AtomicUsize,
+}
+
+/// Configuration for a model in the fallback chain.
+pub struct ModelConfig {
+    pub name: String,
+    pub daily_limit: u64,
+    pub rpm: u32,
+}
+
 impl GeminiClient {
+    /// Create a client with a single model (no fallback).
     pub fn new(api_key: String, model: String, daily_limit: u64, rpm: u32) -> Self {
+        Self::with_fallback(
+            api_key,
+            vec![ModelConfig {
+                name: model,
+                daily_limit,
+                rpm,
+            }],
+        )
+    }
+
+    /// Create a client with a fallback chain of models.
+    /// Models are tried in order; falls back to next on repeated 429s.
+    pub fn with_fallback(api_key: String, models: Vec<ModelConfig>) -> Self {
+        assert!(!models.is_empty(), "at least one model required");
+
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(120))
             .build()
             .expect("failed to build HTTP client");
 
-        let rate_limiter = RateLimiter::new(
-            RateLimiterConfig {
-                rpm,
-                ..Default::default()
-            },
-            daily_limit,
-        );
+        let model_slots = models
+            .into_iter()
+            .map(|mc| ModelSlot {
+                name: mc.name,
+                rate_limiter: RateLimiter::new(
+                    RateLimiterConfig {
+                        rpm: mc.rpm,
+                        ..Default::default()
+                    },
+                    mc.daily_limit,
+                ),
+            })
+            .collect();
 
         Self {
             api_key,
-            model,
             client,
-            rate_limiter,
+            models: model_slots,
+            active_model: AtomicUsize::new(0),
         }
     }
 
-    fn api_url(&self) -> String {
+    fn api_url_for_model(model: &str) -> String {
         format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
-            self.model
+            model
         )
+    }
+
+    fn active_slot(&self) -> &ModelSlot {
+        let idx = self.active_model.load(Ordering::Relaxed);
+        &self.models[idx]
+    }
+
+    /// Try to fall back to the next model. Returns true if successful.
+    fn try_fallback(&self) -> bool {
+        let current = self.active_model.load(Ordering::Relaxed);
+        let next = current + 1;
+        if next < self.models.len() {
+            self.active_model.store(next, Ordering::Relaxed);
+            tracing::warn!(
+                "Falling back from {} to {} due to rate limits",
+                self.models[current].name,
+                self.models[next].name
+            );
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn active_model_name(&self) -> &str {
+        &self.active_slot().name
     }
 
     fn build_request_body(
@@ -116,12 +182,29 @@ impl LlmClient for GeminiClient {
         let body = self.build_request_body(system_prompt, messages, tools);
 
         let mut retries = 0;
-        loop {
-            self.rate_limiter.acquire().await?;
+        let max_total_retries = self
+            .models
+            .iter()
+            .map(|m| m.rate_limiter.max_retries())
+            .sum::<u32>();
 
+        loop {
+            let slot = self.active_slot();
+            let model_name = slot.name.clone();
+
+            // Try to acquire from rate limiter; if daily budget exhausted, fallback
+            if let Err(e) = slot.rate_limiter.acquire().await {
+                tracing::warn!("Model {} budget issue: {}", model_name, e);
+                if self.try_fallback() {
+                    continue;
+                }
+                return Err(e);
+            }
+
+            let url = Self::api_url_for_model(&model_name);
             let response = self
                 .client
-                .post(self.api_url())
+                .post(url)
                 .query(&[("key", &self.api_key)])
                 .json(&body)
                 .send()
@@ -138,11 +221,19 @@ impl LlmClient for GeminiClient {
                     .and_then(|v| v.parse::<u64>().ok())
                     .map(Duration::from_secs);
 
-                self.rate_limiter.report_rate_limit(retry_after).await;
+                slot.rate_limiter.report_rate_limit(retry_after).await;
                 retries += 1;
 
-                if retries > self.rate_limiter.max_retries() {
-                    anyhow::bail!("Gemini API rate limited after {} retries", retries);
+                // After 3 consecutive 429s on this model, try fallback
+                if retries % 3 == 0 && self.try_fallback() {
+                    continue;
+                }
+
+                if retries > max_total_retries {
+                    anyhow::bail!(
+                        "Gemini API rate limited after {} retries across all models",
+                        retries
+                    );
                 }
                 continue;
             }
@@ -152,7 +243,7 @@ impl LlmClient for GeminiClient {
                 anyhow::bail!("Gemini API error {}: {}", status.as_u16(), error_body);
             }
 
-            self.rate_limiter.report_success().await;
+            slot.rate_limiter.report_success().await;
 
             let resp_body: Value = response
                 .json()
@@ -282,5 +373,35 @@ mod tests {
         let body = client.build_request_body("system prompt", &messages, &[]);
         assert!(body.get("contents").is_some());
         assert!(body.get("systemInstruction").is_some());
+    }
+
+    #[test]
+    fn test_fallback_chain() {
+        let client = GeminiClient::with_fallback(
+            "test-key".into(),
+            vec![
+                ModelConfig {
+                    name: "gemini-2.5-flash-preview-04-17".into(),
+                    daily_limit: 250,
+                    rpm: 10,
+                },
+                ModelConfig {
+                    name: "gemini-2.5-flash-lite".into(),
+                    daily_limit: 1000,
+                    rpm: 15,
+                },
+            ],
+        );
+
+        assert_eq!(client.active_model_name(), "gemini-2.5-flash-preview-04-17");
+        assert!(client.try_fallback());
+        assert_eq!(client.active_model_name(), "gemini-2.5-flash-lite");
+        assert!(!client.try_fallback()); // no more models
+    }
+
+    #[test]
+    fn test_single_model_no_fallback() {
+        let client = GeminiClient::new("test-key".into(), "gemini-2.5-flash".into(), 250, 10);
+        assert!(!client.try_fallback());
     }
 }
