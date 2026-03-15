@@ -29,6 +29,9 @@ jobs:
       - name: Clippy
         run: cargo clippy -- -D warnings
 
+      - name: Check benchmarks compile
+        run: cargo bench --no-run
+
   test:
     name: Test
     runs-on: ${{ matrix.os }}
