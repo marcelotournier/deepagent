@@ -10,6 +10,10 @@ use serde::{Deserialize, Serialize};
 pub struct FunctionCall {
     pub name: String,
     pub args: serde_json::Value,
+    /// Thought signature from Gemini 3.x models — must be preserved
+    /// and sent back in the conversation for function calling to work.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
 }
 
 /// A single part of a model response.
@@ -42,6 +46,8 @@ pub enum MessagePart {
     FunctionCall {
         #[serde(rename = "functionCall")]
         function_call: FunctionCall,
+        #[serde(rename = "thoughtSignature", skip_serializing_if = "Option::is_none")]
+        thought_signature: Option<String>,
     },
     FunctionResponse {
         #[serde(rename = "functionResponse")]

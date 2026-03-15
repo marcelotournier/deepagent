@@ -149,13 +149,21 @@ impl GeminiClient {
                         MessagePart::Text { text } => {
                             serde_json::json!({"text": text})
                         }
-                        MessagePart::FunctionCall { function_call } => {
-                            serde_json::json!({
+                        MessagePart::FunctionCall {
+                            function_call,
+                            thought_signature,
+                        } => {
+                            let mut part = serde_json::json!({
                                 "functionCall": {
                                     "name": function_call.name,
                                     "args": function_call.args
                                 }
-                            })
+                            });
+                            // Gemini 3.x: include thought signature if present
+                            if let Some(sig) = thought_signature {
+                                part["thoughtSignature"] = serde_json::json!(sig);
+                            }
+                            part
                         }
                         MessagePart::FunctionResponse { function_response } => {
                             serde_json::json!({
@@ -351,7 +359,17 @@ fn parse_gemini_response(body: &Value) -> Result<Vec<ResponsePart>> {
 
                     let args = fc.get("args").cloned().unwrap_or(serde_json::json!({}));
 
-                    parts.push(ResponsePart::FunctionCall(FunctionCall { name, args }));
+                    // Gemini 3.x: capture thought signature if present
+                    let thought_signature = part
+                        .get("thoughtSignature")
+                        .and_then(|s| s.as_str())
+                        .map(|s| s.to_string());
+
+                    parts.push(ResponsePart::FunctionCall(FunctionCall {
+                        name,
+                        args,
+                        thought_signature,
+                    }));
                 }
             }
         }

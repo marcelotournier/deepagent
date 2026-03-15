@@ -48,8 +48,7 @@ impl super::Tool for WebFetchTool {
                 },
                 "headers": {
                     "type": "object",
-                    "description": "Optional HTTP headers to include",
-                    "additionalProperties": { "type": "string" }
+                    "description": "Optional HTTP headers as key-value pairs (e.g. {\"Authorization\": \"Bearer token\"})"
                 }
             },
             "required": ["url"]

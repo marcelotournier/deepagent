@@ -41,8 +41,7 @@ impl super::Tool for LsTool {
                     "type": "string",
                     "description": "Directory to list (default: current directory)"
                 }
-            },
-            "required": []
+            }
         })
     }
 

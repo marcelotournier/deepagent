@@ -12,11 +12,11 @@ pub struct Cli {
     #[arg(long, default_value_t = false)]
     pub stdin: bool,
 
-    /// Model to use (default: gemini-2.5-flash-preview-04-17, the latest Flash 3.1)
+    /// Model to use (default: gemini-3-flash-preview, the latest Flash 3.x)
     #[arg(
         long,
         env = "DEEPAGENT_MODEL",
-        default_value = "gemini-2.5-flash-preview-04-17"
+        default_value = "gemini-3-flash-preview"
     )]
     pub model: String,
 
@@ -101,7 +101,7 @@ mod tests {
         let cli = Cli {
             prompt: Some("hello".into()),
             stdin: false,
-            model: "gemini-2.5-flash-preview-04-17".into(),
+            model: "gemini-3-flash-preview".into(),
             max_turns: 25,
             timeout: 120,
             log_level: "warn".into(),
@@ -120,7 +120,7 @@ mod tests {
         let cli = Cli {
             prompt: None,
             stdin: false,
-            model: "gemini-2.5-flash-preview-04-17".into(),
+            model: "gemini-3-flash-preview".into(),
             max_turns: 25,
             timeout: 120,
             log_level: "warn".into(),
@@ -142,7 +142,7 @@ mod tests {
         let cli = Cli {
             prompt: Some("explain this".into()),
             stdin: false,
-            model: "gemini-2.5-flash-preview-04-17".into(),
+            model: "gemini-3-flash-preview".into(),
             max_turns: 25,
             timeout: 120,
             log_level: "warn".into(),
@@ -163,7 +163,7 @@ mod tests {
         let cli = Cli {
             prompt: None,
             stdin: false,
-            model: "gemini-2.5-flash-preview-04-17".into(),
+            model: "gemini-3-flash-preview".into(),
             max_turns: 25,
             timeout: 120,
             log_level: "warn".into(),
@@ -179,14 +179,14 @@ mod tests {
 
     #[test]
     fn test_daily_limits() {
-        assert_eq!(daily_limit_for_model("gemini-2.5-flash-preview-04-17"), 250);
+        assert_eq!(daily_limit_for_model("gemini-3-flash-preview"), 250);
         assert_eq!(daily_limit_for_model("gemini-2.5-pro"), 100);
         assert_eq!(daily_limit_for_model("gemini-2.5-flash-lite"), 1000);
     }
 
     #[test]
     fn test_rpm_limits() {
-        assert_eq!(rpm_for_model("gemini-2.5-flash-preview-04-17"), 10);
+        assert_eq!(rpm_for_model("gemini-3-flash-preview"), 10);
         assert_eq!(rpm_for_model("gemini-2.5-pro"), 5);
         assert_eq!(rpm_for_model("gemini-2.5-flash-lite"), 15);
     }

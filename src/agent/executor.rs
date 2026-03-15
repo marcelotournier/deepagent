@@ -214,6 +214,7 @@ todowrite(action="add", text="Step 1: find files") → glob(...) → todowrite(a
                         });
 
                         model_parts.push(MessagePart::FunctionCall {
+                            thought_signature: fc.thought_signature.clone(),
                             function_call: fc.clone(),
                         });
 
@@ -285,19 +286,11 @@ todowrite(action="add", text="Step 1: find files") → glob(...) → todowrite(a
                 }
             }
 
-            // Smart model routing: if only simple tool calls (read-only tools),
-            // hint to use the lite model for the next turn to save tokens.
-            let has_text = response.iter().any(|p| matches!(p, ResponsePart::Text(_)));
-            let only_readonly_tools = response.iter().all(|p| match p {
-                ResponsePart::FunctionCall(fc) => is_readonly_tool(&fc.name),
-                ResponsePart::Text(_) => true,
-            });
-
-            if !has_text && only_readonly_tools {
-                self.client.hint_prefer_lite();
-            } else {
-                self.client.hint_prefer_primary();
-            }
+            // Keep using primary model for all turns.
+            // Smart routing to lite disabled: Gemini 3.x lite models require
+            // thought_signature which is incompatible with mid-conversation switching.
+            // Fallback to lite only happens on 429 rate limits (handled in GeminiClient).
+            self.client.hint_prefer_primary();
 
             // Coalesce: all function responses go in a single message
             // This is critical for free-tier — one request instead of N
@@ -434,12 +427,6 @@ fn extract_file_change(tool_name: &str, args: &serde_json::Value) -> Option<File
     })
 }
 
-/// Tools that only read state and don't modify files.
-/// These can safely use a cheaper/faster model.
-fn is_readonly_tool(name: &str) -> bool {
-    matches!(name, "read" | "grep" | "glob" | "ls" | "think" | "todoread")
-}
-
 /// Estimate total token count across all messages.
 /// Uses chars/4 as a rough approximation (works well for English/code).
 fn estimate_tokens(messages: &[Message]) -> usize {
@@ -450,7 +437,7 @@ fn estimate_tokens(messages: &[Message]) -> usize {
                 .iter()
                 .map(|part| match part {
                     MessagePart::Text { text } => text.len() / 4,
-                    MessagePart::FunctionCall { function_call } => {
+                    MessagePart::FunctionCall { function_call, .. } => {
                         (function_call.name.len() + function_call.args.to_string().len()) / 4
                     }
                     MessagePart::FunctionResponse { function_response } => {
@@ -564,6 +551,7 @@ mod tests {
                 vec![ResponsePart::FunctionCall(FunctionCall {
                     name: "bash".to_string(),
                     args: serde_json::json!({"command": "echo hi"}),
+                    thought_signature: None,
                 })],
                 vec![ResponsePart::Text("Done! The output was 'hi'.".to_string())],
             ],
@@ -604,10 +592,12 @@ mod tests {
                     ResponsePart::FunctionCall(FunctionCall {
                         name: "bash".to_string(),
                         args: serde_json::json!({"command": "echo one"}),
+                        thought_signature: None,
                     }),
                     ResponsePart::FunctionCall(FunctionCall {
                         name: "bash".to_string(),
                         args: serde_json::json!({"command": "echo two"}),
+                        thought_signature: None,
                     }),
                 ],
                 vec![ResponsePart::Text(
@@ -739,14 +729,17 @@ mod tests {
                 vec![ResponsePart::FunctionCall(FunctionCall {
                     name: "bash".to_string(),
                     args: serde_json::json!({"command": "echo stuck"}),
+                    thought_signature: None,
                 })],
                 vec![ResponsePart::FunctionCall(FunctionCall {
                     name: "bash".to_string(),
                     args: serde_json::json!({"command": "echo stuck"}),
+                    thought_signature: None,
                 })],
                 vec![ResponsePart::FunctionCall(FunctionCall {
                     name: "bash".to_string(),
                     args: serde_json::json!({"command": "echo stuck"}),
+                    thought_signature: None,
                 })],
             ],
             call_count: Arc::new(AtomicUsize::new(0)),
@@ -766,6 +759,7 @@ mod tests {
                 vec![ResponsePart::FunctionCall(FunctionCall {
                     name: "nonexistent_tool".to_string(),
                     args: serde_json::json!({}),
+                    thought_signature: None,
                 })],
                 vec![ResponsePart::Text("ok".to_string())],
             ],

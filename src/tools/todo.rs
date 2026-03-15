@@ -176,8 +176,7 @@ impl super::Tool for TodoReadTool {
     fn parameters_schema(&self) -> Value {
         serde_json::json!({
             "type": "object",
-            "properties": {},
-            "required": []
+            "properties": {}
         })
     }
 
