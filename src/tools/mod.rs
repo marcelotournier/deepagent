@@ -45,11 +45,20 @@ impl ToolRegistry {
 
     /// Create a registry with all built-in tools.
     pub fn with_defaults(working_dir: std::path::PathBuf) -> Self {
+        Self::with_config(working_dir, 120, 8192)
+    }
+
+    /// Create a registry with configurable timeouts.
+    pub fn with_config(
+        working_dir: std::path::PathBuf,
+        timeout_secs: u64,
+        max_output: usize,
+    ) -> Self {
         let mut registry = Self::new();
         registry.register(Box::new(bash::BashTool::new(
             working_dir.clone(),
-            120,
-            8192,
+            timeout_secs,
+            max_output,
         )));
         registry.register(Box::new(read::ReadTool::new(32000)));
         registry.register(Box::new(write::WriteTool));

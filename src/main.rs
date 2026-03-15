@@ -50,8 +50,8 @@ async fn main() -> Result<()> {
     // Set up working directory
     let working_dir = std::env::current_dir().context("failed to get current directory")?;
 
-    // Create tools
-    let tools = ToolRegistry::with_defaults(working_dir.clone());
+    // Create tools with configured timeout
+    let tools = ToolRegistry::with_config(working_dir.clone(), cli.timeout, 8192);
 
     // Build system prompt
     let os_info = format!("{} {}", std::env::consts::OS, std::env::consts::ARCH);
@@ -82,6 +82,7 @@ async fn main() -> Result<()> {
 
     let verbose = cli.verbose;
     let json_mode = cli.json;
+    let start_time = std::time::Instant::now();
 
     // Collect events for JSON output
     let events: Arc<Mutex<Vec<JsonEvent>>> = Arc::new(Mutex::new(Vec::new()));
@@ -101,15 +102,25 @@ async fn main() -> Result<()> {
         })
         .await?;
 
+    let elapsed = start_time.elapsed();
+
     if json_mode {
         let collected = events.lock().unwrap();
         let output = serde_json::json!({
             "result": result,
+            "elapsed_ms": elapsed.as_millis(),
+            "model": cli.model,
             "events": collected.iter().map(|e| serde_json::to_value(e).unwrap()).collect::<Vec<_>>(),
         });
         println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
         println!("{}", result);
+        if verbose {
+            eprintln!(
+                "\x1b[90m[completed in {:.2}s]\x1b[0m",
+                elapsed.as_secs_f64()
+            );
+        }
     }
 
     Ok(())
