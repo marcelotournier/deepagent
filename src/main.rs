@@ -129,9 +129,9 @@ async fn main() -> Result<()> {
 
     if !cli.model.contains("lite") {
         model_chain.push(ModelConfig {
-            name: "gemini-2.5-flash-lite".to_string(),
-            daily_limit: daily_limit_for_model("gemini-2.5-flash-lite"),
-            rpm: rpm_for_model("gemini-2.5-flash-lite"),
+            name: "gemini-3.1-flash-lite-preview".to_string(),
+            daily_limit: daily_limit_for_model("gemini-3.1-flash-lite-preview"),
+            rpm: rpm_for_model("gemini-3.1-flash-lite-preview"),
         });
     }
 
