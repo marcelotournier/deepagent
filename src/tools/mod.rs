@@ -5,6 +5,8 @@ pub mod grep;
 pub mod ls;
 pub mod patch;
 pub mod read;
+pub mod todo;
+pub mod webfetch;
 pub mod write;
 
 use anyhow::Result;
@@ -55,6 +57,12 @@ impl ToolRegistry {
         registry.register(Box::new(glob::GlobTool::new(200)));
         registry.register(Box::new(ls::LsTool::new(2)));
         registry.register(Box::new(patch::PatchTool));
+        registry.register(Box::new(webfetch::WebFetchTool::new()));
+
+        let todo_list = todo::new_todo_list();
+        registry.register(Box::new(todo::TodoWriteTool::new(todo_list.clone())));
+        registry.register(Box::new(todo::TodoReadTool::new(todo_list)));
+
         registry
     }
 
