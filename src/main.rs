@@ -190,9 +190,26 @@ async fn main() -> Result<()> {
 
     if json_mode {
         let collected = events.lock().unwrap();
+        let tool_calls: usize = collected
+            .iter()
+            .filter(|e| e.event_type == "tool_call")
+            .count();
+        let turns: usize = collected
+            .iter()
+            .filter(|e| e.event_type == "turn_start")
+            .count();
+        // Rough token estimate: chars / 4
+        let estimated_output_tokens = result.len() / 4;
+
         let output = serde_json::json!({
             "result": result,
-            "elapsed_ms": elapsed.as_millis(),
+            "metrics": {
+                "elapsed_ms": elapsed.as_millis(),
+                "turns": turns,
+                "tool_calls": tool_calls,
+                "estimated_output_tokens": estimated_output_tokens,
+                "result_chars": result.len(),
+            },
             "model": cli.model,
             "session_id": session_id,
             "events": collected.iter().map(|e| serde_json::to_value(e).unwrap()).collect::<Vec<_>>(),

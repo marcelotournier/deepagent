@@ -35,48 +35,65 @@ TASKS[6]="Run cargo check and report any errors or warnings"
 TASKS[7]="Find all uses of unwrap() in the src/api/ directory"
 TASKS[8]="Write a unit test for the format_size function in src/tools/ls.rs"
 TASKS[9]="Read src/tools/mod.rs and explain the ToolRegistry design"
-TASKS[10]="Create a shell script scripts/setup_pi.sh that installs Rust and builds deepagent for Raspberry Pi"
+TASKS[10]="Create a shell script scripts/hello.sh that prints system info and the current date"
 
-run_task() {
+run_deepagent() {
     local task_num="$1"
-    local agent="$2"  # "deepagent" or "claude"
     local prompt="${TASKS[$task_num]}"
 
-    echo "  Task $task_num [$agent]: $prompt"
+    echo "  Task $task_num [deepagent]: ${prompt:0:60}..."
 
+    local output_file="$RESULTS_DIR/task_${task_num}_deepagent.json"
+
+    # Use JSON mode for structured metrics
+    timeout 180 cargo run --release -q -- --json -p "$prompt" > "$output_file" 2>/dev/null || {
+        echo '{"result":"(timeout or error)","metrics":{"elapsed_ms":180000,"turns":0,"tool_calls":0}}' > "$output_file"
+    }
+
+    # Extract metrics from JSON
+    local elapsed tool_calls turns
+    elapsed=$(python3 -c "import json,sys; d=json.load(open('$output_file')); print(d.get('metrics',{}).get('elapsed_ms',0))" 2>/dev/null || echo "0")
+    tool_calls=$(python3 -c "import json,sys; d=json.load(open('$output_file')); print(d.get('metrics',{}).get('tool_calls',0))" 2>/dev/null || echo "0")
+    turns=$(python3 -c "import json,sys; d=json.load(open('$output_file')); print(d.get('metrics',{}).get('turns',0))" 2>/dev/null || echo "0")
+
+    local elapsed_s
+    elapsed_s=$(python3 -c "print(f'{int($elapsed)/1000:.2f}')")
+
+    echo "    Time: ${elapsed_s}s | Turns: $turns | Tool calls: $tool_calls"
+    echo "$task_num,deepagent,$elapsed_s,$turns,$tool_calls" >> "$RESULTS_DIR/summary.csv"
+}
+
+run_claude() {
+    local task_num="$1"
+    local prompt="${TASKS[$task_num]}"
+
+    if ! command -v claude &>/dev/null; then
+        echo "    [SKIP] claude not found"
+        echo "$task_num,claude,N/A,N/A,N/A" >> "$RESULTS_DIR/summary.csv"
+        return
+    fi
+
+    echo "  Task $task_num [claude -p]: ${prompt:0:60}..."
+
+    local output_file="$RESULTS_DIR/task_${task_num}_claude.txt"
     local start_time
     start_time=$(python3 -c "import time; print(time.time())")
 
-    local output_file="$RESULTS_DIR/task_${task_num}_${agent}.txt"
+    timeout 180 claude -p "$prompt" > "$output_file" 2>/dev/null || true
 
-    if [[ "$agent" == "deepagent" ]]; then
-        timeout 120 cargo run --release -- -p "$prompt" > "$output_file" 2>/dev/null || true
-    elif [[ "$agent" == "claude" ]]; then
-        if command -v claude &>/dev/null; then
-            timeout 120 claude -p "$prompt" > "$output_file" 2>/dev/null || true
-        else
-            echo "    [SKIP] claude not found" | tee "$output_file"
-            return
-        fi
-    fi
-
-    local end_time
+    local end_time elapsed_s output_size
     end_time=$(python3 -c "import time; print(time.time())")
-
-    local elapsed
-    elapsed=$(python3 -c "print(f'{$end_time - $start_time:.2f}')")
-
-    local output_size
+    elapsed_s=$(python3 -c "print(f'{$end_time - $start_time:.2f}')")
     output_size=$(wc -c < "$output_file" | tr -d ' ')
 
-    echo "    Time: ${elapsed}s | Output: ${output_size} bytes"
-    echo "$task_num,$agent,$elapsed,$output_size" >> "$RESULTS_DIR/summary.csv"
+    echo "    Time: ${elapsed_s}s | Output: ${output_size} bytes"
+    echo "$task_num,claude,$elapsed_s,N/A,N/A" >> "$RESULTS_DIR/summary.csv"
 }
 
 # Header
-echo "task,agent,time_seconds,output_bytes" > "$RESULTS_DIR/summary.csv"
+echo "task,agent,time_seconds,turns,tool_calls" > "$RESULTS_DIR/summary.csv"
 echo "================================================"
-echo "  deepagent Benchmark Suite"
+echo "  deepagent Benchmark Suite v0.1.0"
 echo "  Project: $PROJECT_DIR"
 echo "  Date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "================================================"
@@ -90,29 +107,30 @@ else
 fi
 
 for t in "${tasks[@]}"; do
-    run_task "$t" "deepagent"
+    run_deepagent "$t"
     if $COMPARE; then
-        run_task "$t" "claude"
+        run_claude "$t"
     fi
 done
 
 echo ""
 echo "================================================"
-echo "  Results saved to: $RESULTS_DIR/summary.csv"
+echo "  Results saved to: $RESULTS_DIR/"
 echo "================================================"
 
 if $COMPARE; then
     echo ""
     echo "Side-by-side comparison:"
-    echo "Task | deepagent (s) | claude (s) | deepagent (bytes) | claude (bytes)"
-    echo "-----|---------------|------------|-------------------|---------------"
+    printf "%-5s | %-15s | %-15s | %-8s | %-8s\n" "Task" "deepagent (s)" "claude (s)" "turns" "tools"
+    printf "%-5s-+-%-15s-+-%-15s-+-%-8s-+-%-8s\n" "-----" "---------------" "---------------" "--------" "--------"
     for t in "${tasks[@]}"; do
-        da_line=$(grep "^$t,deepagent," "$RESULTS_DIR/summary.csv" || echo "$t,deepagent,N/A,N/A")
-        cl_line=$(grep "^$t,claude," "$RESULTS_DIR/summary.csv" || echo "$t,claude,N/A,N/A")
-        da_time=$(echo "$da_line" | cut -d',' -f3)
-        cl_time=$(echo "$cl_line" | cut -d',' -f3)
-        da_bytes=$(echo "$da_line" | cut -d',' -f4)
-        cl_bytes=$(echo "$cl_line" | cut -d',' -f4)
-        printf "  %2s | %13s | %10s | %17s | %s\n" "$t" "$da_time" "$cl_time" "$da_bytes" "$cl_bytes"
+        da_time=$(awk -F',' "/^$t,deepagent,/{print \$3}" "$RESULTS_DIR/summary.csv" || echo "N/A")
+        cl_time=$(awk -F',' "/^$t,claude,/{print \$3}" "$RESULTS_DIR/summary.csv" || echo "N/A")
+        da_turns=$(awk -F',' "/^$t,deepagent,/{print \$4}" "$RESULTS_DIR/summary.csv" || echo "N/A")
+        da_tools=$(awk -F',' "/^$t,deepagent,/{print \$5}" "$RESULTS_DIR/summary.csv" || echo "N/A")
+        printf "  %2s  | %13s | %13s | %6s | %6s\n" "$t" "$da_time" "$cl_time" "$da_turns" "$da_tools"
     done
 fi
+
+echo ""
+echo "Individual results in $RESULTS_DIR/task_*"
