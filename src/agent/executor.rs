@@ -137,6 +137,7 @@ impl Agent {
 
         let tool_declarations = self.tools.gemini_function_declarations();
         let mut final_output = String::new();
+        let mut recent_calls: Vec<String> = Vec::new();
 
         for turn in 0..self.max_turns {
             on_event(AgentEvent::TurnStart {
@@ -224,6 +225,28 @@ impl Agent {
                 break;
             }
 
+            // Loop detection: if the same tool calls repeat 3 times, inject a hint
+            let call_signature: String = response
+                .iter()
+                .filter_map(|p| match p {
+                    ResponsePart::FunctionCall(fc) => Some(format!("{}:{}", fc.name, fc.args)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("|");
+
+            if !call_signature.is_empty() {
+                recent_calls.push(call_signature.clone());
+                if recent_calls.len() >= 3 {
+                    let last_three = &recent_calls[recent_calls.len() - 3..];
+                    if last_three[0] == last_three[1] && last_three[1] == last_three[2] {
+                        tracing::warn!("Loop detected: same tool call repeated 3 times, breaking");
+                        final_output = "(agent stopped: detected repeated tool calls)".to_string();
+                        break;
+                    }
+                }
+            }
+
             // Smart model routing: if only simple tool calls (read-only tools),
             // hint to use the lite model for the next turn to save tokens.
             let has_text = response.iter().any(|p| matches!(p, ResponsePart::Text(_)));
@@ -271,8 +294,34 @@ impl Agent {
 
     async fn execute_tool(&self, fc: &FunctionCall) -> Result<String> {
         match self.tools.get(&fc.name) {
-            Some(tool) => tool.execute(fc.args.clone()).await,
-            None => anyhow::bail!("unknown tool: {}", fc.name),
+            Some(tool) => {
+                // Validate required parameters before execution
+                let schema = tool.parameters_schema();
+                if let Some(required) = schema.get("required").and_then(|r| r.as_array()) {
+                    for req in required {
+                        if let Some(param_name) = req.as_str() {
+                            if fc.args.get(param_name).is_none()
+                                || fc.args.get(param_name) == Some(&serde_json::Value::Null)
+                            {
+                                anyhow::bail!(
+                                    "missing required parameter '{}' for tool '{}'",
+                                    param_name,
+                                    fc.name
+                                );
+                            }
+                        }
+                    }
+                }
+                tool.execute(fc.args.clone()).await
+            }
+            None => {
+                let available = self.tools.tool_names().join(", ");
+                anyhow::bail!(
+                    "unknown tool: '{}'. Available tools: {}",
+                    fc.name,
+                    available
+                )
+            }
         }
     }
 }
@@ -619,5 +668,54 @@ mod tests {
             let result = function_response.response["result"].as_str().unwrap();
             assert_eq!(result.len(), 5000);
         }
+    }
+
+    #[tokio::test]
+    async fn test_loop_detection() {
+        // Agent that always calls the same tool — should detect loop and stop
+        let client = MockClient {
+            responses: vec![
+                vec![ResponsePart::FunctionCall(FunctionCall {
+                    name: "bash".to_string(),
+                    args: serde_json::json!({"command": "echo stuck"}),
+                })],
+                vec![ResponsePart::FunctionCall(FunctionCall {
+                    name: "bash".to_string(),
+                    args: serde_json::json!({"command": "echo stuck"}),
+                })],
+                vec![ResponsePart::FunctionCall(FunctionCall {
+                    name: "bash".to_string(),
+                    args: serde_json::json!({"command": "echo stuck"}),
+                })],
+            ],
+            call_count: Arc::new(AtomicUsize::new(0)),
+        };
+
+        let tools = ToolRegistry::with_defaults(std::env::current_dir().unwrap());
+        let agent = Agent::new(Box::new(client), tools, 10, "system".to_string());
+
+        let result = agent.run("do something").await.unwrap();
+        assert!(result.contains("repeated tool calls"));
+    }
+
+    #[tokio::test]
+    async fn test_unknown_tool_lists_available() {
+        let client = MockClient {
+            responses: vec![
+                vec![ResponsePart::FunctionCall(FunctionCall {
+                    name: "nonexistent_tool".to_string(),
+                    args: serde_json::json!({}),
+                })],
+                vec![ResponsePart::Text("ok".to_string())],
+            ],
+            call_count: Arc::new(AtomicUsize::new(0)),
+        };
+
+        let tools = ToolRegistry::with_defaults(std::env::current_dir().unwrap());
+        let agent = Agent::new(Box::new(client), tools, 10, "system".to_string());
+
+        // Should not panic — error gets sent back to model
+        let result = agent.run("use nonexistent tool").await.unwrap();
+        assert_eq!(result, "ok");
     }
 }
