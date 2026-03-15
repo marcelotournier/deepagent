@@ -48,6 +48,10 @@ pub struct Cli {
     #[arg(long, default_value_t = false)]
     pub sessions: bool,
 
+    /// Override the system prompt (or set via DEEPAGENT_SYSTEM_PROMPT env var)
+    #[arg(long, env = "DEEPAGENT_SYSTEM_PROMPT")]
+    pub system_prompt: Option<String>,
+
     /// Initialize a DEEPAGENT.md config file in the current directory
     #[arg(long, default_value_t = false)]
     pub init: bool,
@@ -103,6 +107,7 @@ mod tests {
             log_level: "warn".into(),
             verbose: false,
             json: false,
+            system_prompt: None,
             resume: None,
             sessions: false,
             init: false,
@@ -121,6 +126,7 @@ mod tests {
             log_level: "warn".into(),
             verbose: false,
             json: false,
+            system_prompt: None,
             resume: None,
             sessions: false,
             init: false,
@@ -142,6 +148,7 @@ mod tests {
             log_level: "warn".into(),
             verbose: false,
             json: false,
+            system_prompt: None,
             resume: None,
             sessions: false,
             init: false,
@@ -162,6 +169,7 @@ mod tests {
             log_level: "warn".into(),
             verbose: false,
             json: false,
+            system_prompt: None,
             resume: None,
             sessions: false,
             init: false,

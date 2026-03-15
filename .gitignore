@@ -10,3 +10,5 @@ dist/
 *.swo
 *~
 .DS_Store
+benchmark_results/
+.deepagent/

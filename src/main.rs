@@ -112,10 +112,13 @@ async fn main() -> Result<()> {
     // Create tools with configured timeout
     let tools = ToolRegistry::with_config(working_dir.clone(), cli.timeout, 8192);
 
-    // Build system prompt
-    let os_info = format!("{} {}", std::env::consts::OS, std::env::consts::ARCH);
-    let system_prompt =
-        Agent::build_system_prompt(&tools, &working_dir.display().to_string(), &os_info);
+    // Build system prompt (custom override or default)
+    let system_prompt = if let Some(ref custom) = cli.system_prompt {
+        custom.clone()
+    } else {
+        let os_info = format!("{} {}", std::env::consts::OS, std::env::consts::ARCH);
+        Agent::build_system_prompt(&tools, &working_dir.display().to_string(), &os_info)
+    };
 
     // Create Gemini client with fallback chain for free-tier resilience
     let mut model_chain = vec![ModelConfig {
