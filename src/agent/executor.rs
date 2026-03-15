@@ -46,9 +46,13 @@ impl Agent {
         }
     }
 
-    /// Build the default system prompt with tool schemas and environment info.
+    /// Build the default system prompt with tool schemas, environment info,
+    /// and optional project instructions from DEEPAGENT.md.
     pub fn build_system_prompt(tools: &ToolRegistry, working_dir: &str, os_info: &str) -> String {
         let tool_schemas = serde_json::to_string_pretty(&tools.schemas()).unwrap_or_default();
+
+        // Read project-specific instructions if available
+        let project_instructions = Self::read_project_config(working_dir);
 
         format!(
             r#"You are an expert coding agent. You solve programming tasks by reading, writing, and executing code.
@@ -74,8 +78,37 @@ impl Agent {
 
 ## Response Format
 - To use a tool: respond with a function_call
-- When done: respond with a text summary of what you accomplished"#
+- When done: respond with a text summary of what you accomplished
+{project_instructions}"#
         )
+    }
+
+    /// Read project-specific configuration from DEEPAGENT.md or similar files.
+    /// Returns formatted section for the system prompt, or empty string if not found.
+    fn read_project_config(working_dir: &str) -> String {
+        let config_files = ["DEEPAGENT.md", ".deepagent.md", "CLAUDE.md"];
+
+        for filename in &config_files {
+            let path = std::path::Path::new(working_dir).join(filename);
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if !content.is_empty() {
+                    // Truncate to 8KB to avoid blowing up the context
+                    let truncated = if content.len() > 8192 {
+                        format!("{}...\n(truncated)", &content[..8192])
+                    } else {
+                        content
+                    };
+
+                    tracing::info!("Loaded project config from {}", filename);
+                    return format!(
+                        "\n## Project Instructions (from {})\n{}",
+                        filename, truncated
+                    );
+                }
+            }
+        }
+
+        String::new()
     }
 
     /// Run the agent loop with the given user prompt. Returns the final text output.
