@@ -36,6 +36,30 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    // Handle --init: create DEEPAGENT.md template
+    if cli.init {
+        let path = std::path::Path::new("DEEPAGENT.md");
+        if path.exists() {
+            eprintln!("DEEPAGENT.md already exists. Remove it first to reinitialize.");
+            std::process::exit(1);
+        }
+        std::fs::write(
+            path,
+            "# DEEPAGENT.md — Project Instructions\n\n\
+             <!-- deepagent reads this file and includes it in the system prompt. -->\n\
+             <!-- Add project-specific rules, conventions, and context here. -->\n\n\
+             ## Project Overview\n\n\
+             <!-- Describe what this project does -->\n\n\
+             ## Conventions\n\n\
+             <!-- Coding style, commit conventions, testing requirements -->\n\n\
+             ## Important Files\n\n\
+             <!-- Key files the agent should know about -->\n",
+        )
+        .context("failed to write DEEPAGENT.md")?;
+        println!("Created DEEPAGENT.md — edit it to customize agent behavior for this project.");
+        return Ok(());
+    }
+
     // Read stdin if available (non-blocking check)
     let stdin_content = if cli.stdin || !std::io::stdin().is_terminal() {
         let mut buf = String::new();

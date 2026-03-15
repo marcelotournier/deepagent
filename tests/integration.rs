@@ -130,6 +130,34 @@ fn test_custom_model_flag() {
 }
 
 #[test]
+fn test_init_creates_config() {
+    let dir = tempfile::tempdir().unwrap();
+    Command::cargo_bin("deepagent")
+        .unwrap()
+        .current_dir(dir.path())
+        .arg("--init")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Created DEEPAGENT.md"));
+
+    assert!(dir.path().join("DEEPAGENT.md").exists());
+}
+
+#[test]
+fn test_init_refuses_overwrite() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("DEEPAGENT.md"), "existing").unwrap();
+
+    Command::cargo_bin("deepagent")
+        .unwrap()
+        .current_dir(dir.path())
+        .arg("--init")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("already exists"));
+}
+
+#[test]
 fn test_max_turns_flag() {
     Command::cargo_bin("deepagent")
         .unwrap()

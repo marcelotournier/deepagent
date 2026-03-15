@@ -47,6 +47,10 @@ pub struct Cli {
     /// List saved sessions
     #[arg(long, default_value_t = false)]
     pub sessions: bool,
+
+    /// Initialize a DEEPAGENT.md config file in the current directory
+    #[arg(long, default_value_t = false)]
+    pub init: bool,
 }
 
 impl Cli {
@@ -101,6 +105,7 @@ mod tests {
             json: false,
             resume: None,
             sessions: false,
+            init: false,
         };
         assert_eq!(cli.get_prompt(None), Some("hello".into()));
     }
@@ -118,6 +123,7 @@ mod tests {
             json: false,
             resume: None,
             sessions: false,
+            init: false,
         };
         assert_eq!(
             cli.get_prompt(Some("from stdin".into())),
@@ -138,6 +144,7 @@ mod tests {
             json: false,
             resume: None,
             sessions: false,
+            init: false,
         };
         let result = cli.get_prompt(Some("code here".into())).unwrap();
         assert!(result.contains("explain this"));
@@ -157,6 +164,7 @@ mod tests {
             json: false,
             resume: None,
             sessions: false,
+            init: false,
         };
         assert!(cli.get_prompt(None).is_none());
     }
