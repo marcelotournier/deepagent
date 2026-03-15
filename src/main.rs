@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use std::io::{IsTerminal, Read};
+use std::sync::{Arc, Mutex};
 
-use deepagent::agent::Agent;
+use deepagent::agent::{Agent, AgentEvent};
 use deepagent::api::gemini::{GeminiClient, ModelConfig};
 use deepagent::cli::{daily_limit_for_model, rpm_for_model, Cli};
 use deepagent::tools::ToolRegistry;
@@ -58,14 +59,12 @@ async fn main() -> Result<()> {
         Agent::build_system_prompt(&tools, &working_dir.display().to_string(), &os_info);
 
     // Create Gemini client with fallback chain for free-tier resilience
-    // Primary: user-selected model → fallback: flash-lite (highest free-tier quota)
     let mut model_chain = vec![ModelConfig {
         name: cli.model.clone(),
         daily_limit: daily_limit_for_model(&cli.model),
         rpm: rpm_for_model(&cli.model),
     }];
 
-    // Add flash-lite as fallback if primary isn't already lite
     if !cli.model.contains("lite") {
         model_chain.push(ModelConfig {
             name: "gemini-2.5-flash-lite".to_string(),
@@ -81,9 +80,131 @@ async fn main() -> Result<()> {
 
     tracing::info!("Running agent with model: {}", cli.model);
 
-    let result = agent.run(&prompt).await?;
+    let verbose = cli.verbose;
+    let json_mode = cli.json;
 
-    println!("{}", result);
+    // Collect events for JSON output
+    let events: Arc<Mutex<Vec<JsonEvent>>> = Arc::new(Mutex::new(Vec::new()));
+    let events_clone = events.clone();
+
+    let result = agent
+        .run_with_progress(&prompt, move |event| {
+            if verbose {
+                print_progress(&event);
+            }
+            if json_mode {
+                events_clone
+                    .lock()
+                    .unwrap()
+                    .push(JsonEvent::from_agent_event(&event));
+            }
+        })
+        .await?;
+
+    if json_mode {
+        let collected = events.lock().unwrap();
+        let output = serde_json::json!({
+            "result": result,
+            "events": collected.iter().map(|e| serde_json::to_value(e).unwrap()).collect::<Vec<_>>(),
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else {
+        println!("{}", result);
+    }
 
     Ok(())
+}
+
+#[derive(serde::Serialize)]
+struct JsonEvent {
+    #[serde(rename = "type")]
+    event_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    turn: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_turns: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    args: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<String>,
+}
+
+impl JsonEvent {
+    fn from_agent_event(event: &AgentEvent) -> Self {
+        match event {
+            AgentEvent::TurnStart { turn, max_turns } => Self {
+                event_type: "turn_start".into(),
+                turn: Some(*turn),
+                max_turns: Some(*max_turns),
+                name: None,
+                args: None,
+                output: None,
+                text: None,
+            },
+            AgentEvent::ToolCall { name, args } => Self {
+                event_type: "tool_call".into(),
+                turn: None,
+                max_turns: None,
+                name: Some(name.clone()),
+                args: Some(args.clone()),
+                output: None,
+                text: None,
+            },
+            AgentEvent::ToolResult { name, output } => Self {
+                event_type: "tool_result".into(),
+                turn: None,
+                max_turns: None,
+                name: Some(name.clone()),
+                args: None,
+                output: Some(output.clone()),
+                text: None,
+            },
+            AgentEvent::ModelText { text } => Self {
+                event_type: "model_text".into(),
+                turn: None,
+                max_turns: None,
+                name: None,
+                args: None,
+                output: None,
+                text: Some(text.clone()),
+            },
+        }
+    }
+}
+
+fn print_progress(event: &AgentEvent) {
+    use std::io::Write;
+    let stderr = std::io::stderr();
+    let mut err = stderr.lock();
+
+    match event {
+        AgentEvent::TurnStart { turn, max_turns } => {
+            let _ = writeln!(err, "\x1b[90m[turn {}/{}]\x1b[0m", turn, max_turns);
+        }
+        AgentEvent::ToolCall { name, args } => {
+            let short_args = if args.len() > 80 {
+                format!("{}...", &args[..77])
+            } else {
+                args.clone()
+            };
+            let _ = writeln!(err, "\x1b[36m▶ {}({})\x1b[0m", name, short_args);
+        }
+        AgentEvent::ToolResult { name, output } => {
+            let lines: Vec<&str> = output.lines().take(3).collect();
+            let preview = lines.join("\n  ");
+            let _ = writeln!(err, "\x1b[32m✓ {}\x1b[0m\n  {}", name, preview);
+        }
+        AgentEvent::ModelText { text } => {
+            let preview = if text.len() > 100 {
+                format!("{}...", &text[..97])
+            } else {
+                text.clone()
+            };
+            let _ = writeln!(err, "\x1b[33m● {}\x1b[0m", preview);
+        }
+    }
 }

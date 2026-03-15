@@ -31,6 +31,14 @@ pub struct Cli {
     /// Log level
     #[arg(long, env = "DEEPAGENT_LOG", default_value = "warn")]
     pub log_level: String,
+
+    /// Show progress (tool calls and results) on stderr
+    #[arg(short, long, default_value_t = false)]
+    pub verbose: bool,
+
+    /// Output result as JSON (structured output for piping)
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
 }
 
 impl Cli {
@@ -81,6 +89,8 @@ mod tests {
             max_turns: 25,
             timeout: 120,
             log_level: "warn".into(),
+            verbose: false,
+            json: false,
         };
         assert_eq!(cli.get_prompt(None), Some("hello".into()));
     }
@@ -94,6 +104,8 @@ mod tests {
             max_turns: 25,
             timeout: 120,
             log_level: "warn".into(),
+            verbose: false,
+            json: false,
         };
         assert_eq!(
             cli.get_prompt(Some("from stdin".into())),
@@ -110,6 +122,8 @@ mod tests {
             max_turns: 25,
             timeout: 120,
             log_level: "warn".into(),
+            verbose: false,
+            json: false,
         };
         let result = cli.get_prompt(Some("code here".into())).unwrap();
         assert!(result.contains("explain this"));
@@ -125,6 +139,8 @@ mod tests {
             max_turns: 25,
             timeout: 120,
             log_level: "warn".into(),
+            verbose: false,
+            json: false,
         };
         assert!(cli.get_prompt(None).is_none());
     }

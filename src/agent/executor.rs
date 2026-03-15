@@ -5,6 +5,19 @@ use anyhow::Result;
 /// Maximum characters per tool result before truncation.
 const MAX_TOOL_OUTPUT: usize = 16384;
 
+/// Progress events emitted during agent execution.
+#[derive(Debug, Clone)]
+pub enum AgentEvent {
+    /// A new turn is starting.
+    TurnStart { turn: usize, max_turns: usize },
+    /// The model is calling a tool.
+    ToolCall { name: String, args: String },
+    /// A tool has returned a result.
+    ToolResult { name: String, output: String },
+    /// The model produced text output.
+    ModelText { text: String },
+}
+
 /// The ReAct agent that orchestrates think → act → observe loops.
 pub struct Agent {
     client: Box<dyn LlmClient>,
@@ -55,6 +68,15 @@ Respond with either:
 
     /// Run the agent loop with the given user prompt. Returns the final text output.
     pub async fn run(&self, prompt: &str) -> Result<String> {
+        self.run_with_progress(prompt, |_| {}).await
+    }
+
+    /// Run the agent loop with a progress callback for streaming output.
+    pub async fn run_with_progress(
+        &self,
+        prompt: &str,
+        mut on_event: impl FnMut(AgentEvent),
+    ) -> Result<String> {
         let mut messages = vec![Message {
             role: "user".to_string(),
             parts: vec![MessagePart::Text {
@@ -66,6 +88,10 @@ Respond with either:
         let mut final_output = String::new();
 
         for turn in 0..self.max_turns {
+            on_event(AgentEvent::TurnStart {
+                turn: turn + 1,
+                max_turns: self.max_turns,
+            });
             tracing::info!("Agent turn {}/{}", turn + 1, self.max_turns);
 
             let response = self
@@ -83,10 +109,16 @@ Respond with either:
                         tracing::info!("Model text: {}", &text[..text.len().min(100)]);
                         final_output = text.clone();
                         model_parts.push(MessagePart::Text { text: text.clone() });
+                        on_event(AgentEvent::ModelText { text: text.clone() });
                     }
                     ResponsePart::FunctionCall(fc) => {
                         has_function_call = true;
-                        tracing::info!("Tool call: {}({})", fc.name, fc.args);
+                        let args_str = fc.args.to_string();
+                        tracing::info!("Tool call: {}({})", fc.name, args_str);
+                        on_event(AgentEvent::ToolCall {
+                            name: fc.name.clone(),
+                            args: args_str,
+                        });
 
                         model_parts.push(MessagePart::FunctionCall {
                             function_call: fc.clone(),
@@ -104,6 +136,10 @@ Respond with either:
                             fc.name,
                             &result_text[..result_text.len().min(200)]
                         );
+                        on_event(AgentEvent::ToolResult {
+                            name: fc.name.clone(),
+                            output: result_text[..result_text.len().min(500)].to_string(),
+                        });
 
                         function_responses.push(MessagePart::FunctionResponse {
                             function_response: FunctionResponse {
