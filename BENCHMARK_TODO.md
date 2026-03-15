@@ -5,7 +5,11 @@ The loop picks up the next unchecked item each cycle.
 
 ## Current Cycle
 
-- [ ] Run competency benchmark C1 (calculator app) — needs GEMINI_API_KEY
+- [ ] Run competency benchmark C1 (calculator app)
+- [x] Efficiency task 1 (list files): 104s, 2 turns, 1 tool, 8.9K tokens
+- [x] Efficiency task 2 (explain code): 89s, 2 turns, 1 tool, 13.5K tokens
+- [x] Efficiency task 3 (find TODOs): 100s, 2 turns, 1 tool, 8.9K tokens
+- [ ] Efficiency tasks 4-10 (rate limited, retry next window)
 - [x] Run competency benchmark C2 (architecture docs) — Score: 18/20, 84.6s, 10 turns
 - [ ] Run competency benchmark C3 (monitor script)
 - [ ] Run competency benchmark C4 (error handling refactor)
