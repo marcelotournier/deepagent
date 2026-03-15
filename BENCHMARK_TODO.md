@@ -6,7 +6,7 @@ The loop picks up the next unchecked item each cycle.
 ## Current Cycle
 
 - [ ] Run competency benchmark C1 (calculator app) — needs GEMINI_API_KEY
-- [ ] Run competency benchmark C2 (architecture docs)
+- [x] Run competency benchmark C2 (architecture docs) — Score: 18/20, 84.6s, 10 turns
 - [ ] Run competency benchmark C3 (monitor script)
 - [ ] Run competency benchmark C4 (error handling refactor)
 - [ ] Run competency benchmark C5 (fuzzy search module)
