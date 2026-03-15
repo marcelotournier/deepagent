@@ -246,7 +246,10 @@ impl LlmClient for GeminiClient {
 
             let status = response.status();
 
-            if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            // 429 (rate limit) and 503 (overloaded) both get exponential backoff
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                || status == reqwest::StatusCode::SERVICE_UNAVAILABLE
+            {
                 let retry_after = response
                     .headers()
                     .get("retry-after")
@@ -254,18 +257,28 @@ impl LlmClient for GeminiClient {
                     .and_then(|v| v.parse::<u64>().ok())
                     .map(Duration::from_secs);
 
+                tracing::warn!(
+                    "API {} from {} — backoff retry #{}/{}",
+                    status.as_u16(),
+                    model_name,
+                    retries + 1,
+                    max_total_retries
+                );
+
                 slot.rate_limiter.report_rate_limit(retry_after).await;
                 retries += 1;
 
-                // After 3 consecutive 429s on this model, try fallback
+                // After 3 consecutive failures on this model, try fallback
                 if retries % 3 == 0 && self.try_fallback() {
                     continue;
                 }
 
                 if retries > max_total_retries {
                     anyhow::bail!(
-                        "Gemini API rate limited after {} retries across all models",
-                        retries
+                        "Gemini API rate limited after {} retries across all models (last: {} {})",
+                        retries,
+                        status.as_u16(),
+                        model_name
                     );
                 }
                 continue;
@@ -277,7 +290,7 @@ impl LlmClient for GeminiClient {
                     400 => "\nHint: Check that your prompt and tool schemas are valid.",
                     401 | 403 => "\nHint: Your GEMINI_API_KEY may be invalid or expired. Get a new key at https://ai.google.dev",
                     404 => &format!("\nHint: Model '{}' may not exist or is not available on your plan.", model_name),
-                    500 | 503 => "\nHint: Gemini API server error. Try again in a few seconds.",
+                    500 => "\nHint: Gemini API server error. Try again in a few seconds.",
                     _ => "",
                 };
                 anyhow::bail!(
