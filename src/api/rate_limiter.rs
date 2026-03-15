@@ -47,8 +47,9 @@ impl Default for RateLimiterConfig {
 
 impl RateLimiter {
     pub fn new(config: RateLimiterConfig, daily_limit: u64) -> Self {
-        // Compute minimum interval from RPM: 60s / rpm, with 10% safety margin
-        let min_interval_secs = 60.0 / config.rpm as f64 * 1.1;
+        // Compute minimum interval from RPM: 60s / rpm, with 30% safety margin
+        // to avoid 429s on free tier (preview models have tighter limits)
+        let min_interval_secs = 60.0 / config.rpm as f64 * 1.3;
         let min_interval = Duration::from_secs_f64(min_interval_secs);
 
         // Use the larger of base_delay or min_interval as initial delay
@@ -215,13 +216,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_rpm_spacing() {
-        // 10 RPM = 6s min interval, with 10% margin = 6.6s
+        // 10 RPM = 6s min interval, with 30% margin = 7.8s
         let config = RateLimiterConfig {
             rpm: 10,
             ..Default::default()
         };
         let limiter = RateLimiter::new(config, 250);
-        assert!(limiter.min_interval >= Duration::from_secs(6));
-        assert!(limiter.min_interval < Duration::from_secs(8));
+        assert!(limiter.min_interval >= Duration::from_secs(7));
+        assert!(limiter.min_interval < Duration::from_secs(9));
     }
 }

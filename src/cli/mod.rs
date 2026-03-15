@@ -82,12 +82,17 @@ pub fn daily_limit_for_model(model: &str) -> u64 {
 }
 
 /// RPM (requests per minute) limits per model (Google AI Studio free tier).
+/// Conservative estimates to avoid 429s — preview models have stricter limits.
 pub fn rpm_for_model(model: &str) -> u32 {
     if model.contains("pro") {
-        5
+        2
     } else if model.contains("lite") {
-        15
+        10
+    } else if model.contains("preview") || model.contains("3-flash") || model.contains("3.1") {
+        // Gemini 3.x preview models have tighter RPM on free tier
+        5
     } else {
+        // Gemini 2.5-flash stable
         10
     }
 }
@@ -186,8 +191,9 @@ mod tests {
 
     #[test]
     fn test_rpm_limits() {
-        assert_eq!(rpm_for_model("gemini-3-flash-preview"), 10);
-        assert_eq!(rpm_for_model("gemini-2.5-pro"), 5);
-        assert_eq!(rpm_for_model("gemini-2.5-flash-lite"), 15);
+        assert_eq!(rpm_for_model("gemini-3-flash-preview"), 5);
+        assert_eq!(rpm_for_model("gemini-2.5-pro"), 2);
+        assert_eq!(rpm_for_model("gemini-2.5-flash-lite"), 10);
+        assert_eq!(rpm_for_model("gemini-2.5-flash"), 10);
     }
 }
