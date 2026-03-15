@@ -125,12 +125,21 @@ impl GeminiClient {
     }
 
     /// Switch back to the primary model for reasoning.
+    /// Only switches if the primary model hasn't been recently rate-limited.
     pub fn prefer_primary(&self) {
-        self.active_model.store(0, Ordering::Relaxed);
-        tracing::debug!(
-            "Smart routing: using primary model {} for reasoning",
-            self.models[0].name
-        );
+        // Don't switch back if we fell back due to rate limits —
+        // the fallback model is working, no point burning retries
+        // on the primary again. The generate() loop will retry primary
+        // naturally when the rate limit window clears.
+        let current = self.active_model.load(Ordering::Relaxed);
+        if current > 0 {
+            tracing::debug!(
+                "Staying on fallback model {} (primary was rate-limited)",
+                self.models[current].name
+            );
+            return;
+        }
+        tracing::debug!("Using primary model {} for reasoning", self.models[0].name);
     }
 
     fn build_request_body(
