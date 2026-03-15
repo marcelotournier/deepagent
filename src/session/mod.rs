@@ -66,8 +66,9 @@ impl Session {
     }
 
     /// Load the most recent session from the session directory.
+    /// Uses the `updated_at` field inside the session JSON (not filesystem mtime).
     pub fn load_latest(dir: &Path) -> Result<Self> {
-        let mut sessions: Vec<(PathBuf, u64)> = std::fs::read_dir(dir)
+        let mut sessions: Vec<Session> = std::fs::read_dir(dir)
             .context("no session directory")?
             .filter_map(|e| e.ok())
             .filter(|e| {
@@ -78,20 +79,15 @@ impl Session {
                     .unwrap_or(false)
             })
             .filter_map(|e| {
-                e.metadata()
+                std::fs::read_to_string(e.path())
                     .ok()
-                    .and_then(|m| m.modified().ok())
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| (e.path(), d.as_secs()))
+                    .and_then(|json| serde_json::from_str::<Session>(&json).ok())
             })
             .collect();
 
-        sessions.sort_by(|a, b| b.1.cmp(&a.1));
+        sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
-        let (path, _) = sessions.first().context("no sessions found")?;
-
-        let json = std::fs::read_to_string(path)?;
-        serde_json::from_str(&json).context("failed to parse session file")
+        sessions.into_iter().next().context("no sessions found")
     }
 
     /// List all sessions in the directory.
@@ -212,13 +208,12 @@ mod tests {
     fn test_session_load_latest() {
         let dir = tempfile::tempdir().unwrap();
 
-        let s1 = Session::new("old".into(), "first".into(), "flash".into());
+        let mut s1 = Session::new("old".into(), "first".into(), "flash".into());
+        s1.updated_at = 1000; // older timestamp
         s1.save(dir.path()).unwrap();
 
-        // Small delay to ensure different mtime
-        std::thread::sleep(std::time::Duration::from_millis(50));
-
-        let s2 = Session::new("new".into(), "second".into(), "flash".into());
+        let mut s2 = Session::new("new".into(), "second".into(), "flash".into());
+        s2.updated_at = 2000; // newer timestamp
         s2.save(dir.path()).unwrap();
 
         let latest = Session::load_latest(dir.path()).unwrap();
