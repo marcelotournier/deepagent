@@ -136,7 +136,7 @@ print(data["metrics"]["total_tokens"])
 
 ```bash
 cargo build --release           # 4.5MB binary
-cargo test                      # 93 tests
+cargo test                      # 102 tests
 cargo bench                     # 16 Criterion benchmarks
 cargo clippy -- -D warnings
 cargo fmt --check
