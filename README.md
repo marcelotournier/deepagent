@@ -1,11 +1,12 @@
 # deepagent
 
-A Rust CLI coding agent powered by Gemini Flash 3.1 (Google AI Studio free tier), installable via `pip install deepagent`.
+A Rust CLI coding agent powered by Gemini 3 Flash (Google AI Studio free tier), installable via `pip install deepagent`.
 
 Equivalent to `claude -p` / `gemini -p` / `codex -p` — a single-shot piped prompt that reads stdin or `-p "prompt"`, executes tools, and prints the result.
 
 **Target device:** Raspberry Pi 4/5 (ARM64, 1-8 GB RAM)
-**Cost:** $0 (Gemini free tier: 250 RPD on Flash, 1000 RPD on Flash Lite)
+**Default model:** `gemini-3-flash-preview` → fallback `gemini-3.1-flash-lite-preview`
+**Cost:** $0 (free tier: ~250 RPD, ~2 RPM on preview models)
 
 ## Install
 
@@ -85,13 +86,17 @@ deepagent --system-prompt "You are a Python expert" -p "optimize this"
 
 ## Free-Tier Optimization
 
-- **Model fallback chain**: Flash 3.1 → Flash Lite on rate limits
-- **Smart routing**: Lite model for read-only tools, primary for reasoning
-- **RPM-aware rate limiting**: Exponential backoff with jitter, respects Retry-After
-- **Auto-switch at 90% budget**: Seamlessly moves to Flash Lite when daily quota is low
+**Hard limits (observed):** ~2 RPM, 250 RPD on gemini-3-flash-preview. Design for efficiency.
+
+- **Auto-complete**: `--max-turns 1` returns tool results directly (1.3s, 1 API call)
+- **Sticky fallback**: After 429/503, stay on fallback model (saves ~30s/turn)
+- **429 + 503 backoff**: Google uses both for rate limiting — both get exp backoff
+- **RPM spacing**: 39s between requests on preview models (2 RPM + 30% margin)
+- **Auto-switch at 90% budget**: Seamlessly moves to Flash Lite
 - **Context compaction**: Auto-summarize at 80% of 1M token window
-- **Tool output truncation**: 16KB head+tail split for large outputs
-- **Request coalescing**: Multiple tool results sent in single API call
+- **No schema duplication**: Tool schemas via API field, not in prompt text
+- **Request coalescing**: All tool results in single message
+- **Budget**: 125 simple tasks/day or 25 complex tasks/day
 
 ## Benchmarks
 
@@ -148,7 +153,7 @@ print(data["metrics"]["total_tokens"])
 
 ```bash
 cargo build --release           # 4.5MB binary
-cargo test                      # 102 tests
+cargo test                      # 103 tests
 cargo bench                     # 16 Criterion benchmarks
 cargo clippy -- -D warnings
 cargo fmt --check

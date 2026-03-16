@@ -102,38 +102,66 @@ deepagent/
 
 ### Model Selection (priority order, free tier)
 
-1. **`gemini-2.5-flash`** — 10 RPM, 250 RPD, 250k TPM (best free-tier balance)
-1. **`gemini-2.5-flash-lite`** — 15 RPM, 1000 RPD (fallback for high-volume)
-1. **`gemini-2.5-pro`** — 5 RPM, 100 RPD (complex reasoning only)
-1. **`gemini-3-flash-preview`** — if available on paid tier
+1. **`gemini-3-flash-preview`** — Primary model (Gemini 3 Flash). ~2 RPM observed, 250 RPD.
+1. **`gemini-3.1-flash-lite-preview`** — Fallback on 429/503. Higher RPM (~10), 1000 RPD.
+1. **`gemini-2.5-flash`** — Stable alternative if 3.x unavailable. ~10 RPM, 250 RPD.
 
-### Free Tier Rate Limits (as of March 2026)
+**NEVER fall back to 2.5 models when using 3.x primary.**
+
+### Free Tier Hard Limits (observed, March 2026)
+
+**THIS IS THE #1 CONSTRAINT. All design decisions must respect these limits.**
+
+| Model | RPM (observed) | RPD | TPM |
+|-------|---------------|-----|-----|
+| gemini-3-flash-preview | ~2 | ~250 | 250k |
+| gemini-3.1-flash-lite-preview | ~10 | ~1000 | 250k |
+| gemini-2.5-flash | ~10 | ~250 | 250k |
+| gemini-2.5-pro | ~2 | ~100 | 250k |
 
 - Limits are **per-project**, not per-key
 - RPD resets at **midnight Pacific Time**
+- Google uses **both 429 and 503** for rate limiting
+- Preview models have **much lower RPM** than documented (~2 vs claimed 10)
 - 250k TPM shared across all models
-- Gemini 3.x preview models: paid tier only
+
+### Daily Budget Math
+
+```
+Simple task (--max-turns 1):  1 API call  → 250 tasks/day
+Standard task (2 turns):      2 API calls → 125 tasks/day
+Complex task (10 turns):     10 API calls →  25 tasks/day
+```
+
+Design every feature to minimize API calls per task.
 
 ### Exponential Backoff Strategy
 
 ```
 Base delay:     1 second
 Max delay:      60 seconds
-Max retries:    8
+Max retries:    8 per model (16 total with fallback)
 Jitter:         ±25% random
 Backoff factor: 2x
-429 handling:   respect Retry-After header if present
-Daily budget:   track RPD in-process, pause when at 90% quota
+429 AND 503:    both get exponential backoff + retry
+Retry-After:    respect header if present
+Sticky fallback: once fallen back, STAY on fallback model
+                 (don't retry primary every turn — wastes ~30s)
+Daily budget:   auto-switch to lite at 90% quota
+RPM spacing:    60s / RPM * 1.3 safety margin
+                (2 RPM = 39s between requests)
 ```
 
 ### Free-Usage Optimization Rules
 
-1. **Batch context**: pack system prompt + file contents in one request
-1. **Model routing**: use flash-lite for simple tool dispatch, flash for reasoning
-1. **Token compression**: truncate file reads to relevant sections (head/tail)
-1. **Request coalescing**: combine sequential tool results before next LLM call
-1. **Cache system prompt**: reuse across turns (Gemini caches >32k contexts)
-1. **Daily budget guard**: after 225 RPD (90%), switch to flash-lite or queue
+1. **Minimize API calls**: Use `--max-turns 1` for simple lookups (1 call vs 2)
+1. **Auto-complete**: When max_turns reached, return tool results directly (no summarization call)
+1. **Sticky fallback**: After 429, stay on fallback model — don't retry primary every turn
+1. **Token compression**: Tool output truncated to 16KB (head 75% + tail 25%)
+1. **Request coalescing**: All tool results sent in single message (1 call, not N)
+1. **No schema duplication**: Tool schemas sent via API `tools` field, not in system prompt
+1. **Daily budget guard**: Auto-switch to lite at 90% RPD
+1. **System prompt efficiency**: Instructs model to combine text + tool calls, skip unnecessary verification
 
 -----
 
@@ -443,7 +471,8 @@ maturin build --release --target aarch64-unknown-linux-gnu
 |Variable             |Required|Default           |Description                            |
 |---------------------|--------|------------------|---------------------------------------|
 |`GEMINI_API_KEY`     |yes     |—                 |Google AI Studio API key               |
-|`DEEPAGENT_MODEL`    |no      |`gemini-2.5-flash`|Model to use                           |
+|`DEEPAGENT_MODEL`    |no      |`gemini-3-flash-preview`|Model to use                     |
+|`DEEPAGENT_SYSTEM_PROMPT`|no  |—                 |Override system prompt                 |
 |`DEEPAGENT_MAX_TURNS`|no      |`25`              |Max agent loop iterations              |
 |`DEEPAGENT_TIMEOUT`  |no      |`120`             |Tool execution timeout (seconds)       |
 |`DEEPAGENT_LOG`      |no      |`warn`            |Log level (trace/debug/info/warn/error)|
@@ -451,26 +480,59 @@ maturin build --release --target aarch64-unknown-linux-gnu
 
 -----
 
+## Gemini 3.x API Requirements
+
+- **Thought signatures**: Gemini 3.x returns `thoughtSignature` on function call
+  parts. This MUST be preserved and sent back in the conversation, or you get a
+  400 error: "Function call is missing a thought_signature".
+  See: https://ai.google.dev/gemini-api/docs/thought-signatures
+- **No `additionalProperties`** in tool schemas (Gemini rejects it)
+- **No empty `required: []`** arrays in tool schemas
+- **Function declarations** sent via API `tools` field, not in system prompt text
+
 ## Known Limitations
 
-- No streaming output yet (prints full response after each turn)
-- No image/multimodal input (text-only for now)
-- Gemini 3.x models require paid tier
-- Free tier: 250 RPD on flash, plan tasks accordingly
+- No true streaming output (prints after each turn, verbose shows progress)
+- No image/multimodal input (text-only)
+- Free tier: ~2 RPM on preview models, 250 RPD — design for efficiency
 - No MCP server support (tools are built-in only)
 - No sub-agent spawning (single agent loop)
+- Smart model routing disabled (3.x lite requires thought signatures too)
 
 -----
 
 ## Roadmap
 
-1. [ ] Core tool implementations (bash, read, write, edit, grep, glob, ls)
-1. [ ] Gemini API client with exponential backoff
-1. [ ] ReAct agent loop
-1. [ ] CLI with clap (-p flag, stdin, –model, –max-turns)
-1. [ ] Maturin packaging (pip install deepagent)
-1. [ ] Benchmark suite against claude -p
-1. [ ] Pi-specific optimizations (rayon tuning, memory limits)
-1. [ ] Streaming output
-1. [ ] Model fallback chain (flash → flash-lite on 429)
-1. [ ] Session persistence (resume interrupted tasks)
+1. [x] Core tool implementations (bash, read, write, edit, grep, glob, ls) — 12 tools total
+1. [x] Gemini API client with exponential backoff (429 + 503)
+1. [x] ReAct agent loop with context compaction and loop detection
+1. [x] CLI with clap (-p, stdin, --model, --max-turns, --json, --verbose, --init, --sessions, --resume)
+1. [x] Maturin packaging (pip install deepagent)
+1. [x] Benchmark suite against claude -p (10 efficiency + 10 competency tasks)
+1. [x] Pi-specific optimizations (rayon, release profile, 4.5MB binary)
+1. [x] Streaming progress output (--verbose)
+1. [x] Model fallback chain (gemini-3-flash → gemini-3.1-flash-lite on 429/503)
+1. [x] Session persistence (--resume last)
+1. [x] Thought signature support for Gemini 3.x
+1. [x] Auto-complete optimization (--max-turns 1 = 1.3s per task)
+1. [x] File change tracking in output
+1. [x] GitHub release workflow (4 platform binaries)
+1. [x] Python wrapper (from deepagent import run, run_json)
+1. [x] Criterion benchmarks (16 tool execution benchmarks)
+
+### Benchmark Results (v1.1.0, Gemini 3 Flash, free tier)
+
+**Efficiency benchmarks** (10 tasks, --max-turns 3):
+| Task | Time | Turns | Tools | Tokens |
+|------|------|-------|-------|--------|
+| List files | 87.5s | 2 | 1 | 8.5K |
+| Explain code | 87.7s | 2 | 1 | 13.1K |
+| Find TODOs | 146.1s | 2 | 1 | 8.4K |
+| Explain timeout | 95.4s | 3 | 2 | 19.2K |
+| Cargo check | 117.0s | 2 | 1 | 7.9K |
+| Find unwrap() | 87.5s | 2 | 1 | 8.3K |
+| Explain registry | 154.1s | 2 | 1 | 9.6K |
+
+**Fast mode** (--max-turns 1): 1.3s, 1 API call, 3.9K tokens
+
+**Competency benchmark C2** (architecture docs): 84.6s, 10 turns, 158K tokens, score 18/20
