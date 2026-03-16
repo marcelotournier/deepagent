@@ -79,42 +79,25 @@ impl Agent {
 - OS: {os_info}
 - Available tools: {tool_names}
 
+## CRITICAL: API Efficiency
+- **Minimize API calls**: Each response costs quota. Combine multiple tool calls in ONE response when possible.
+- **Include your final text answer alongside the last tool call** when you can predict the outcome.
+- **For simple lookups** (list files, find pattern, read file): use ONE tool call, then give your text answer immediately. Do NOT make a separate call just to summarize tool output.
+- **Avoid unnecessary verification turns**: If you wrote a small file, don't read it back just to confirm.
+
 ## Rules
-1. **Explore before acting**: Use grep/glob to find relevant files before reading them. Read files before editing.
-2. **Make targeted changes**: Edit only what's necessary. Don't refactor code you weren't asked to change.
-3. **Verify your work**: After making changes, run tests or cargo check to verify correctness.
-4. **Use the think tool** for complex tasks: Plan your approach before executing multiple steps.
-5. **Use todowrite/todoread** to track progress on multi-step tasks.
-6. **Be concise**: Provide clear, brief explanations. Focus on what you did and why.
-7. **Handle errors**: If a tool call fails, read the error, adjust your approach, and retry with a different strategy.
-8. **Security**: Never execute destructive commands without being explicitly asked. Never expose secrets.
-9. **Complete the task**: Keep working until the task is fully done, then provide a clear summary.
-
-## Tool Usage Patterns (examples)
-
-**Finding files**: glob → read
-```
-glob(pattern="**/*.rs") → read(path="src/main.rs")
-```
-
-**Fixing a bug**: read → think → edit → bash (verify)
-```
-read(path="src/lib.rs") → think(thought="The bug is on line 42...") → edit(path="src/lib.rs", old_str="...", new_str="...") → bash(command="cargo test")
-```
-
-**Searching codebase**: grep → read relevant matches
-```
-grep(pattern="TODO", path=".") → read(path="src/tools/mod.rs", start_line=10, end_line=20)
-```
-
-**Multi-step task**: todowrite → work → todowrite (update) → verify
-```
-todowrite(action="add", text="Step 1: find files") → glob(...) → todowrite(action="update", id=1, status="done")
-```
+1. **Explore before acting**: Use grep/glob to find files before reading. Read before editing.
+2. **Make targeted changes**: Edit only what's necessary.
+3. **Verify complex changes**: Run tests after multi-file edits. Skip verification for simple writes.
+4. **Be concise**: Brief explanations. No filler.
+5. **Handle errors**: If a tool fails, adjust and retry with a different strategy.
+6. **Security**: Never execute destructive commands unless explicitly asked.
+7. **Complete the task**: Keep working until done, then summarize.
 
 ## Response Format
-- To use a tool: respond with a function_call
-- When done: respond with a text summary of what you accomplished
+- You can return text AND function calls in the same response — do this to save turns.
+- For simple tasks: one tool call + text answer = done in 1 turn.
+- When done: respond with a text summary of what you accomplished.
 {project_instructions}"#
         )
     }
@@ -261,6 +244,31 @@ todowrite(action="add", text="Step 1: find files") → glob(...) → todowrite(a
             if !has_function_call {
                 // Model is done — return text
                 self.client.hint_prefer_primary();
+                break;
+            }
+
+            // Auto-complete: if this is the last allowed turn, format tool
+            // results as the answer instead of making another API call.
+            // Saves 1 API call per task at the cost of no model summarization.
+            if turn + 1 >= self.max_turns {
+                let tool_summary: String = function_responses
+                    .iter()
+                    .filter_map(|p| {
+                        if let MessagePart::FunctionResponse { function_response } = p {
+                            function_response
+                                .response
+                                .get("result")
+                                .and_then(|r| r.as_str())
+                                .map(|s| s.to_string())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                if !tool_summary.is_empty() {
+                    final_output = tool_summary;
+                }
                 break;
             }
 
